@@ -1253,27 +1253,50 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 # --- دستور موقت برای تست عضویت ---
+# --- دستور موقت و پیشرفته برای تست عضویت ---
 async def check_membership_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_owner(update.effective_user.id):
         await update.message.reply_text("این دستور مخصوص مالک ربات است.")
         return
     
-    user_to_check = update.effective_user
-    await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر {user_to_check.id} در کانال {FORCED_JOIN_CHANNEL}...")
-    
+    # اگر کاربری ریپلای شده باشد یا آیدی عددی داده شده باشد، آن را چک می‌کند
+    # در غیر این صورت، خودتان را چک می‌کند
+    user_to_check = None
+    target_id = None
+
+    if update.message.reply_to_message:
+        user_to_check = update.message.reply_to_message.from_user
+        target_id = user_to_check.id
+        await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر ریپلای شده ({target_id})...")
+    elif context.args:
+        try:
+            target_id = int(context.args[0])
+            await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر با آیدی {target_id}...")
+        except ValueError:
+            await update.message.reply_text("❌ فرمت اشتباه است. روی پیام کاربر ریپلای کنید یا آیدی عددی او را وارد کنید.")
+            return
+    else:
+        user_to_check = update.effective_user
+        target_id = user_to_check.id
+        await update.message.reply_text(f"⏳ در حال بررسی عضویت خودتان ({target_id})...")
+
+    if not target_id:
+        await update.message.reply_text("کاربر هدف مشخص نشد.")
+        return
+
     try:
-        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user_to_check.id)
+        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=target_id)
         await update.message.reply_text(
-            f"✅ **موفق!**\n"
-            f"پاسخ دریافت شده از تلگرام:\n"
-            f"User ID: `{member.user.id}`\n"
-            f"Status: `{member.status}`"
+            f"✅ **موفق!**\n\n"
+            f"اطلاعات دریافت شده برای کاربر `{target_id}`:\n"
+            f"**Status:** `{member.status}`\n\n"
+            f"آیا عضو محسوب می‌شود؟ **{'بله' if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR] else 'خیر'}**"
         )
     except Exception as e:
         await update.message.reply_text(
-            f"❌ **خطا!**\n"
-            f"ربات نتوانست اطلاعات عضویت را دریافت کند.\n"
-            f"متن خطا:\n`{e}`"
+            f"❌ **خطا در دریافت اطلاعات!**\n\n"
+            f"ربات نتوانست اطلاعات عضویت کاربر `{target_id}` را دریافت کند.\n"
+            f"**متن خطا:**\n`{e}`"
         )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
