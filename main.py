@@ -35,9 +35,12 @@ SUPPORT_USERNAME = "OLDKASEB"
 FORCED_JOIN_CHANNEL = "@RHINOSOUL_TM"
 GROUP_INSTALL_LIMIT = 50
 INITIAL_LIVES = 6
-# --- تعریف حالت‌های مکالمه برای بازی قارچ ---
-ASKING_GOD_USERNAME, CONFIRMING_GOD = range(2)
-# --- لیست کلمات و جملات ---
+# --- تعریف حالت‌های مکالمه ---
+(ASKING_GOD_USERNAME, CONFIRMING_GOD) = range(2)
+# <<<--- حالت جدید برای بازی دوز --->>>
+(DOOZ_ASKING_OPPONENT,) = range(2,3)
+
+# --- لیست کلمات و جملات (بدون تغییر) ---
 WORD_LIST = [
     "فضاپیما", "کهکشان", "الگوریتم", "کتابخانه", "دانشگاه", "کامپیوتر", "اینترنت", "برنامه", "نویسی", "هوش", "مصنوعی", "یادگیری", "ماشین", "شبکه", "عصبی", "داده", "کاوی", "پایتون", "جاوا", "اسکریپت", 
     "فناوری", "اطلاعات", "امنیت", "سایبری", "حمله", "ویروس", "بدافزار", "آنتی", "ویروس", "دیوار", "آتش", "رمزنگاری", "پروتکل", "دامنه", "میزبانی", "وب", "سرور", "کلاینت", "پایگاه", "داده", 
@@ -581,6 +584,77 @@ async def cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 # --------------------------- GAME: DOOZ (TIC-TAC-TOE) ---------------------------
+# <<<--- توابع جدید برای شروع بازی دوز از پنل --->>>
+async def dooz_start_direct_challenge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """مرحله اول ConversationHandler برای چالش مستقیم دوز."""
+    query = update.callback_query
+    await query.answer()
+    # آیدی کاربر شروع کننده را در حافظه موقت ذخیره می‌کنیم
+    context.chat_data['dooz_challenger_id'] = query.from_user.id
+    
+    text = (
+        "👤 **تعیین حریف برای بازی دوز**\n\n"
+        "لطفاً یوزرنیم (مثلاً @username)، آیدی عددی یا منشن حریف مورد نظر خود را در پیام بعدی ارسال کنید."
+    )
+    keyboard = [[InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="panel_show_main")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    return DOOZ_ASKING_OPPONENT
+
+async def dooz_receive_opponent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """مرحله دوم: دریافت اطلاعات حریف و ارسال چالش."""
+    challenger_id = context.chat_data.get('dooz_challenger_id')
+    challenger = await context.bot.get_chat(challenger_id)
+    message = update.message
+    
+    challenged_user = None
+    # بهترین روش: پیدا کردن از طریق منشن
+    if message.entities:
+        for entity in message.entities:
+            if entity.type == 'mention':
+                username = message.text[entity.offset:entity.offset+entity.length]
+                # این بخش نیاز به دیتابیس یا روش دیگری برای تبدیل یوزرنیم به آیدی دارد
+                # فعلا به روش‌های دیگر اکتفا می‌کنیم
+                pass
+            if entity.type == 'text_mention':
+                challenged_user = entity.user
+    
+    # روش دوم: پیدا کردن از طریق آیدی عددی
+    if not challenged_user and message.text.isdigit():
+        try:
+            challenged_user = await context.bot.get_chat(int(message.text))
+        except Exception as e:
+            logger.error(f"Could not find user by ID for Dooz: {e}")
+
+    # اگر هیچکدام جواب نداد، به کاربر اطلاع می‌دهیم
+    if not challenged_user:
+        await message.reply_text("کاربر مورد نظر یافت نشد. لطفاً مطمئن شوید که کاربر را به درستی منشن کرده‌اید یا آیدی عددی او را وارد کرده‌اید.")
+        return DOOZ_ASKING_OPPONENT
+
+    if challenged_user.is_bot or challenged_user.id == challenger.id:
+        await message.reply_text("شما نمی‌توانید ربات‌ها یا خودتان را به بازی دعوت کنید!")
+        return DOOZ_ASKING_OPPONENT
+    
+    # حذف پیام‌های اضافی و ارسال چالش
+    await message.delete()
+    
+    challenged_mention = challenged_user.mention_html()
+    cb_info = challenged_user.username if challenged_user.username else str(challenged_user.id)
+    text = f"{challenger.mention_html()} شما را به بازی دوز دعوت کرد!"
+    keyboard = [[
+        InlineKeyboardButton("✅ قبول", callback_data=f"dooz_accept_{challenger.id}_{cb_info}"),
+        InlineKeyboardButton("❌ رد", callback_data=f"dooz_decline_{challenger.id}_{cb_info}")
+    ]]
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
+    # پایان مکالمه
+    return ConversationHandler.END
+
+
 async def dooz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await force_join_middleware(update, context): 
         return
@@ -615,14 +689,41 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     
-    if not await force_join_middleware(update, context): 
-        await query.answer()
+    if not await is_user_in_channel(user.id, context): 
+        await query.answer(f"❗️برای ادامه، ابتدا باید در کانال {FORCED_JOIN_CHANNEL} عضو شوید.", show_alert=True)
         return
     
     data = query.data.split('_')
     action = data[1]
 
-    if action in ["accept", "decline"]:
+    if action == "join": # <<<--- منطق جدید برای پیوستن به لابی --->>>
+        creator_id = int(data[2])
+        if user.id == creator_id:
+            await query.answer("شما نمی‌توانید به بازی خودتان ملحق شوید!", show_alert=True)
+            return
+
+        await query.answer()
+        creator_user = await context.bot.get_chat(creator_id)
+
+        # شروع بازی بین دو نفر
+        chat_id = query.message.chat.id
+        game_id = query.message.message_id
+        if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
+
+        active_games['dooz'][chat_id][game_id] = {
+            "players": {creator_id: "❌", user.id: "⭕️"},
+            "board": [[" "]*3 for _ in range(3)],
+            "turn": creator_id
+        }
+        text = f"بازی شروع شد!\n{creator_user.mention_html()} (❌) vs {user.mention_html()} (⭕️)\n\nنوبت {creator_user.mention_html()} است."
+        keyboard = [[
+            InlineKeyboardButton(" ", callback_data=f"dooz_move_{game_id}_{r*3+c}_{creator_id}_{user.id}") 
+            for c in range(3)] for r in range(3)
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+
+    elif action in ["accept", "decline"]:
         await query.answer()
         p1_id, p2_info = int(data[2]), data[3]
         is_correct_user = (user.username and user.username.lower() == p2_info.lower()) or (str(user.id) == p2_info)
@@ -725,6 +826,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------------- GAME: HADS KALAME (با جان جداگانه) ---------------------------
 async def hads_kalame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # این تابع اکنون فقط برای شروع دستی است، پنل منطق خودش را دارد
     if not await force_join_middleware(update, context): return
     
     chat = update.effective_chat
@@ -907,7 +1009,7 @@ async def eteraf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         starter_message = await update.message.reply_text(starter_text)
-        keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https.t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
+        keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
         await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Error in eteraf_command: {e}")
@@ -1029,7 +1131,6 @@ async def is_user_in_channel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -
     try:
         member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user_id)
         logger.info(f"Checked user {user_id} in {FORCED_JOIN_CHANNEL}. Status: {member.status}")
-        # <<<--- اصلاح کلیدی: استفاده از OWNER به جای CREATOR --->>>
         if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
             return True
             
@@ -1081,32 +1182,39 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         await query.message.delete()
 
+    # <<<--- رفع مشکل بازی حکم --->>>
     elif data == "panel_show_hokm":
         await query.answer()
-        await query.message.delete()
-        await hokm_command(query.message, context)
+        text = "⚖️ **بازی حکم**\n\nحالت بازی دو نفره یا چهار نفره را انتخاب کنید:"
+        keyboard = [
+            [
+                InlineKeyboardButton("😎 ۲ نفره", callback_data="hokm_start_2p"),
+                InlineKeyboardButton("👨‍👩‍👧‍👦 ۴ نفره", callback_data="hokm_start_4p")
+            ],
+            [InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="panel_show_main")]
+        ]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
+    # <<<--- سیستم جدید بازی دوز --->>>
     elif data == "panel_show_dooz":
         await query.answer()
-        game_text = (
-            "❌⭕️ **شروع بازی دوز**\n\n"
-            "برای انتخاب حریف، ابتدا روی پیام او **ریپلای** کنید،\n"
-            "سپس دکمه زیر را بزنید."
-        )
+        text = "❌⭕️ **شروع بازی دوز**\n\nچگونه می‌خواهید بازی را شروع کنید؟"
         keyboard = [
-            [InlineKeyboardButton("✅ حریف انتخاب شد", callback_data="dooz_launch_with_reply")],
-            [InlineKeyboardButton("🔙 بازگشت", callback_data="panel_show_main")]
+            [InlineKeyboardButton("🎲 ایجاد لابی بازی (عمومی)", callback_data="dooz_create_lobby")],
+            [InlineKeyboardButton("🎯 چالش با یک کاربر (مستقیم)", callback_data="dooz_start_challenge")],
+            [InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="panel_show_main")]
         ]
-        await query.edit_message_text(game_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-
-    elif data == "dooz_launch_with_reply":
-        if not query.message.reply_to_message:
-            await query.answer("❌ خطا: ابتدا باید روی پیام حریف خود ریپلای کنید.", show_alert=True)
-            return
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         
+    elif data == "dooz_create_lobby":
         await query.answer()
-        await query.message.delete()
-        await dooz_command(query.message, context)
+        text = (
+            f"🎲 {user.mention_html()} یک لابی بازی دوز ایجاد کرد و منتظر حریف است!\n\n"
+            f"⚠️ برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید."
+        )
+        keyboard = [[InlineKeyboardButton("⚔️ پیوستن به بازی", callback_data=f"dooz_join_lobby_{user.id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
 
     elif data == "panel_show_hads_kalame":
         await query.answer()
@@ -1132,6 +1240,7 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         image_file = create_typing_image(sentence)
         await chat.send_photo(photo=image_file, caption="سریع تایپ کنید!")
 
+    # --- بازی‌های مخصوص ادمین ---
     elif data in ["panel_show_hads_addad", "panel_show_gharch", "panel_show_eteraf"]:
         if not await is_group_admin(user.id, chat.id, context):
             await query.answer("❌ این بازی فقط توسط ادمین‌ها قابل شروع است.", show_alert=True)
@@ -1141,6 +1250,7 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.delete()
         
         if data == "panel_show_hads_addad":
+            # شروع بازی با حالت پیش‌فرض (مثلا ۱ تا ۱۰۰)
             if chat.id in active_games['guess_number']:
                 await chat.send_message("یک بازی حدس عدد در این گروه فعال است.")
                 return
@@ -1152,10 +1262,11 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await gharch_command(query.message, context)
             
         elif data == "panel_show_eteraf":
+            # اجرای اعتراف با متن پیش‌فرض
             starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس (که به این پیام ریپلای می‌شود)، از دکمه زیر استفاده کنید."
             bot_username = (await context.bot.get_me()).username
             starter_message = await chat.send_message(starter_text)
-            keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https.t.me/{bot_username}?start=eteraf_{chat.id}_{starter_message.message_id}")]]
+            keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat.id}_{starter_message.message_id}")]]
             await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
 # =================================================================
@@ -1207,8 +1318,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        [InlineKeyboardButton("➕ افزودن ربات به گروه", url=f"https.t.me/{(await context.bot.get_me()).username}?startgroup=true")],
-        [InlineKeyboardButton("👤 ارتباط با پشتیبان", url=f"https.t.me/{SUPPORT_USERNAME}")]
+        [InlineKeyboardButton("➕ افزودن ربات به گروه", url=f"https://t.me/{(await context.bot.get_me()).username}?startgroup=true")],
+        [InlineKeyboardButton("👤 ارتباط با پشتیبان", url=f"https://t.me/{SUPPORT_USERNAME}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1238,7 +1349,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await force_join_middleware(update, context): return
+    if not await pre_command_check(update, context): return
     help_text = "راهنمای ربات 🎮\n\nبا ارسال کلمه «بازی» یا «گیم» پنل بازی‌ها را مشاهده کنید."
     await update.message.reply_text(help_text)
 
@@ -1465,49 +1576,6 @@ def main() -> None:
         return
 
     application = Application.builder().token(BOT_TOKEN).build()
-    
-    # --- دستور تست موقت (می‌توانید بعد از حل مشکل آن را حذف کنید) ---
-    async def check_membership_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await is_owner(update.effective_user.id):
-            await update.message.reply_text("این دستور مخصوص مالک ربات است.")
-            return
-        
-        target_id = None
-        if update.message.reply_to_message:
-            target_id = update.message.reply_to_message.from_user.id
-            await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر ریپلای شده ({target_id})...")
-        elif context.args:
-            try:
-                target_id = int(context.args[0])
-                await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر با آیدی {target_id}...")
-            except ValueError:
-                await update.message.reply_text("❌ فرمت اشتباه است. روی پیام کاربر ریپلای کنید یا آیدی عددی او را وارد کنید.")
-                return
-        else:
-            target_id = update.effective_user.id
-            await update.message.reply_text(f"⏳ در حال بررسی عضویت خودتان ({target_id})...")
-
-        if not target_id:
-            await update.message.reply_text("کاربر هدف مشخص نشد.")
-            return
-
-        try:
-            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=target_id)
-            await update.message.reply_text(
-                f"✅ **موفق!**\n\n"
-                f"اطلاعات دریافت شده برای کاربر `{target_id}`:\n"
-                f"**Status:** `{member.status}`\n\n"
-                f"آیا عضو محسوب می‌شود؟ **{'بله' if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER] else 'خیر'}**"
-            )
-        except Exception as e:
-            await update.message.reply_text(
-                f"❌ **خطا در دریافت اطلاعات!**\n\n"
-                f"ربات نتوانست اطلاعات عضویت کاربر `{target_id}` را دریافت کند.\n"
-                f"**متن خطا:**\n`{e}`"
-            )
-    application.add_handler(CommandHandler("check", check_membership_command))
-    # --- پایان دستور تست ---
-
 
     # --- اولویت ۱: Conversation Handlers ---
     gharch_conv_handler = ConversationHandler(
@@ -1531,6 +1599,17 @@ def main() -> None:
         per_user=False, per_chat=True
     )
     application.add_handler(guess_number_conv)
+
+    # <<<--- ConversationHandler جدید برای بازی دوز --->>>
+    dooz_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(dooz_start_direct_challenge, pattern=r'^dooz_start_challenge$')],
+        states={
+            DOOZ_ASKING_OPPONENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, dooz_receive_opponent)]
+        },
+        fallbacks=[CallbackQueryHandler(game_panel_callback, pattern=r'^panel_show_main$')],
+        conversation_timeout=60 # 60 ثانیه فرصت برای ارسال مشخصات حریف
+    )
+    application.add_handler(dooz_conv_handler)
 
     # --- اولویت ۲: Command Handlers (تمام دستورات) ---
     application.add_handler(CommandHandler("start", start_command))
