@@ -34,7 +34,7 @@ OWNER_IDS = [7662192190, 6041119040]
 SUPPORT_USERNAME = "OLDKASEB"
 FORCED_JOIN_CHANNEL = "@RHINOSOUL_TM"
 GROUP_INSTALL_LIMIT = 50
-INITIAL_LIVES = 6
+INITIAL_LIVES = 10
 # --- تعریف حالت‌های مکالمه برای بازی قارچ ---
 ASKING_GOD_USERNAME, CONFIRMING_GOD = range(2)
 # --- لیست کلمات و جملات ---
@@ -1024,15 +1024,30 @@ async def handle_typing_attempt(update: Update, context: ContextTypes.DEFAULT_TY
 # <<<--- توابع جدید و اصلاح‌شده پنل بازی --->>>
 
 async def is_user_in_channel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """به صورت مخفی چک می‌کند که آیا کاربر در کانال عضو است یا خیر."""
-    if await is_owner(user_id): 
+    """نسخه اصلاح‌شده و مقاوم‌تر برای بررسی عضویت کاربر در کانال."""
+    # اگر کاربر مالک ربات باشد، همیشه اجازه دسترسی دارد
+    if await is_owner(user_id):
         return True
+    
     try:
+        # درخواست اطلاعات عضویت از تلگرام
         member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user_id)
+        
+        # لاگ کردن وضعیت دریافت شده برای دیباگ
+        logger.info(f"Checked user {user_id} in {FORCED_JOIN_CHANNEL}. Status: {member.status}")
+
+        # بررسی دقیق وضعیت‌های مجاز
+        # کاربر باید یکی از این وضعیت‌ها را داشته باشد تا عضو محسوب شود
         if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
             return True
+            
     except Exception as e:
-        logger.error(f"Could not check channel membership for {user_id} in {FORCED_JOIN_CHANNEL}: {e}")
+        # اگر به هر دلیلی (مثل اشتباه بودن آیدی کانال یا عدم دسترسی ربات) خطا رخ دهد، اینجا لاگ می‌شود
+        logger.error(f"CRITICAL: Could not check channel membership for user {user_id} in '{FORCED_JOIN_CHANNEL}'. Error: {e}")
+        # در صورت بروز خطا، دسترسی داده نمی‌شود
+        return False
+        
+    # اگر هیچکدام از شرایط بالا برقرار نبود، یعنی کاربر عضو نیست
     return False
 
 async def game_panel_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
