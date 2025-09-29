@@ -34,7 +34,7 @@ OWNER_IDS = [7662192190, 6041119040]
 SUPPORT_USERNAME = "OLDKASEB"
 FORCED_JOIN_CHANNEL = "@RHINOSOUL_TM"
 GROUP_INSTALL_LIMIT = 50
-INITIAL_LIVES = 10
+INITIAL_LIVES = 6
 # --- تعریف حالت‌های مکالمه برای بازی قارچ ---
 ASKING_GOD_USERNAME, CONFIRMING_GOD = range(2)
 # --- لیست کلمات و جملات ---
@@ -215,7 +215,7 @@ async def force_join_middleware(update: Update, context: ContextTypes.DEFAULT_TY
     if await is_owner(user.id): return True
     try:
         member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-        if member.status in ['member', 'administrator', 'creator']: return True
+        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]: return True
     except Exception as e:
         logger.warning(f"Could not check channel membership for {user.id}: {e}")
     
@@ -725,7 +725,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------------- GAME: HADS KALAME (با جان جداگانه) ---------------------------
 async def hads_kalame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # این تابع اکنون فقط برای شروع دستی است، پنل منطق خودش را دارد
     if not await force_join_middleware(update, context): return
     
     chat = update.effective_chat
@@ -773,7 +772,6 @@ async def handle_letter_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
                 del active_games['hangman'][chat_id]
 
 # --------------------------- GAME: GHARCH & ETERAF ---------------------------
-# ======================= GAME: GHARCH (نسخه جدید با گاد) =======================
 async def gharch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.effective_chat.type == 'private':
         await update.message.reply_text("این بازی فقط در گروه‌ها قابل اجراست.")
@@ -909,7 +907,7 @@ async def eteraf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         starter_message = await update.message.reply_text(starter_text)
-        keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
+        keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https.t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
         await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
     except Exception as e:
         logger.error(f"Error in eteraf_command: {e}")
@@ -1025,29 +1023,20 @@ async def handle_typing_attempt(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def is_user_in_channel(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """نسخه اصلاح‌شده و مقاوم‌تر برای بررسی عضویت کاربر در کانال."""
-    # اگر کاربر مالک ربات باشد، همیشه اجازه دسترسی دارد
     if await is_owner(user_id):
         return True
     
     try:
-        # درخواست اطلاعات عضویت از تلگرام
         member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user_id)
-        
-        # لاگ کردن وضعیت دریافت شده برای دیباگ
         logger.info(f"Checked user {user_id} in {FORCED_JOIN_CHANNEL}. Status: {member.status}")
-
-        # بررسی دقیق وضعیت‌های مجاز
-        # کاربر باید یکی از این وضعیت‌ها را داشته باشد تا عضو محسوب شود
-        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+        # <<<--- اصلاح کلیدی: استفاده از OWNER به جای CREATOR --->>>
+        if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
             return True
             
     except Exception as e:
-        # اگر به هر دلیلی (مثل اشتباه بودن آیدی کانال یا عدم دسترسی ربات) خطا رخ دهد، اینجا لاگ می‌شود
         logger.error(f"CRITICAL: Could not check channel membership for user {user_id} in '{FORCED_JOIN_CHANNEL}'. Error: {e}")
-        # در صورت بروز خطا، دسترسی داده نمی‌شود
         return False
         
-    # اگر هیچکدام از شرایط بالا برقرار نبود، یعنی کاربر عضو نیست
     return False
 
 async def game_panel_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1143,7 +1132,6 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         image_file = create_typing_image(sentence)
         await chat.send_photo(photo=image_file, caption="سریع تایپ کنید!")
 
-    # --- بازی‌های مخصوص ادمین ---
     elif data in ["panel_show_hads_addad", "panel_show_gharch", "panel_show_eteraf"]:
         if not await is_group_admin(user.id, chat.id, context):
             await query.answer("❌ این بازی فقط توسط ادمین‌ها قابل شروع است.", show_alert=True)
@@ -1153,25 +1141,21 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.delete()
         
         if data == "panel_show_hads_addad":
-            # شروع بازی با حالت پیش‌فرض (مثلا ۱ تا ۱۰۰)
             if chat.id in active_games['guess_number']:
                 await chat.send_message("یک بازی حدس عدد در این گروه فعال است.")
                 return
             secret_number = random.randint(1, 100)
             active_games['guess_number'][chat.id] = {"number": secret_number}
             await chat.send_message(f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **1** و **100** انتخاب شده.", parse_mode=ParseMode.MARKDOWN)
-            # چون این بازی ConversationHandler است، شروع آن از پنل به همین شکل کافیست
             
         elif data == "panel_show_gharch":
-            # چون قارچ ConversationHandler است، باید آن را از طریق دستور اصلی فراخوانی کنیم
             await gharch_command(query.message, context)
             
         elif data == "panel_show_eteraf":
-            # اجرای اعتراف با متن پیش‌فرض
             starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس (که به این پیام ریپلای می‌شود)، از دکمه زیر استفاده کنید."
             bot_username = (await context.bot.get_me()).username
             starter_message = await chat.send_message(starter_text)
-            keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat.id}_{starter_message.message_id}")]]
+            keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https.t.me/{bot_username}?start=eteraf_{chat.id}_{starter_message.message_id}")]]
             await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
 
 # =================================================================
@@ -1223,8 +1207,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        [InlineKeyboardButton("➕ افزودن ربات به گروه", url=f"https://t.me/{(await context.bot.get_me()).username}?startgroup=true")],
-        [InlineKeyboardButton("👤 ارتباط با پشتیبان", url=f"https://t.me/{SUPPORT_USERNAME}")]
+        [InlineKeyboardButton("➕ افزودن ربات به گروه", url=f"https.t.me/{(await context.bot.get_me()).username}?startgroup=true")],
+        [InlineKeyboardButton("👤 ارتباط با پشتیبان", url=f"https.t.me/{SUPPORT_USERNAME}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1252,52 +1236,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=owner_id, text=report_text, parse_mode=ParseMode.HTML)
         except:
             pass
-# --- دستور موقت برای تست عضویت ---
-# --- دستور موقت و پیشرفته برای تست عضویت ---
-async def check_membership_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_owner(update.effective_user.id):
-        await update.message.reply_text("این دستور مخصوص مالک ربات است.")
-        return
-    
-    # اگر کاربری ریپلای شده باشد یا آیدی عددی داده شده باشد، آن را چک می‌کند
-    # در غیر این صورت، خودتان را چک می‌کند
-    user_to_check = None
-    target_id = None
-
-    if update.message.reply_to_message:
-        user_to_check = update.message.reply_to_message.from_user
-        target_id = user_to_check.id
-        await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر ریپلای شده ({target_id})...")
-    elif context.args:
-        try:
-            target_id = int(context.args[0])
-            await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر با آیدی {target_id}...")
-        except ValueError:
-            await update.message.reply_text("❌ فرمت اشتباه است. روی پیام کاربر ریپلای کنید یا آیدی عددی او را وارد کنید.")
-            return
-    else:
-        user_to_check = update.effective_user
-        target_id = user_to_check.id
-        await update.message.reply_text(f"⏳ در حال بررسی عضویت خودتان ({target_id})...")
-
-    if not target_id:
-        await update.message.reply_text("کاربر هدف مشخص نشد.")
-        return
-
-    try:
-        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=target_id)
-        await update.message.reply_text(
-            f"✅ **موفق!**\n\n"
-            f"اطلاعات دریافت شده برای کاربر `{target_id}`:\n"
-            f"**Status:** `{member.status}`\n\n"
-            f"آیا عضو محسوب می‌شود؟ **{'بله' if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR] else 'خیر'}**"
-        )
-    except Exception as e:
-        await update.message.reply_text(
-            f"❌ **خطا در دریافت اطلاعات!**\n\n"
-            f"ربات نتوانست اطلاعات عضویت کاربر `{target_id}` را دریافت کند.\n"
-            f"**متن خطا:**\n`{e}`"
-        )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await force_join_middleware(update, context): return
@@ -1528,6 +1466,49 @@ def main() -> None:
 
     application = Application.builder().token(BOT_TOKEN).build()
     
+    # --- دستور تست موقت (می‌توانید بعد از حل مشکل آن را حذف کنید) ---
+    async def check_membership_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await is_owner(update.effective_user.id):
+            await update.message.reply_text("این دستور مخصوص مالک ربات است.")
+            return
+        
+        target_id = None
+        if update.message.reply_to_message:
+            target_id = update.message.reply_to_message.from_user.id
+            await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر ریپلای شده ({target_id})...")
+        elif context.args:
+            try:
+                target_id = int(context.args[0])
+                await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر با آیدی {target_id}...")
+            except ValueError:
+                await update.message.reply_text("❌ فرمت اشتباه است. روی پیام کاربر ریپلای کنید یا آیدی عددی او را وارد کنید.")
+                return
+        else:
+            target_id = update.effective_user.id
+            await update.message.reply_text(f"⏳ در حال بررسی عضویت خودتان ({target_id})...")
+
+        if not target_id:
+            await update.message.reply_text("کاربر هدف مشخص نشد.")
+            return
+
+        try:
+            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=target_id)
+            await update.message.reply_text(
+                f"✅ **موفق!**\n\n"
+                f"اطلاعات دریافت شده برای کاربر `{target_id}`:\n"
+                f"**Status:** `{member.status}`\n\n"
+                f"آیا عضو محسوب می‌شود؟ **{'بله' if member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER] else 'خیر'}**"
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ **خطا در دریافت اطلاعات!**\n\n"
+                f"ربات نتوانست اطلاعات عضویت کاربر `{target_id}` را دریافت کند.\n"
+                f"**متن خطا:**\n`{e}`"
+            )
+    application.add_handler(CommandHandler("check", check_membership_command))
+    # --- پایان دستور تست ---
+
+
     # --- اولویت ۱: Conversation Handlers ---
     gharch_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("gharch", gharch_command)],
@@ -1575,7 +1556,7 @@ def main() -> None:
     application.add_handler(CommandHandler("unban_user", unban_user_command))
     application.add_handler(CommandHandler("ban_group", ban_group_command))
     application.add_handler(CommandHandler("unban_group", unban_group_command))
-    application.add_handler(CommandHandler("check", check_membership_command))
+
     # --- اولویت ۳: CallbackQuery Handlers ---
     application.add_handler(CallbackQueryHandler(hokm_callback, pattern=r'^hokm_'))
     application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
