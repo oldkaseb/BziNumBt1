@@ -200,7 +200,7 @@ def convert_persian_to_english_numbers(text: str) -> str:
 active_games = {'guess_number': {}, 'dooz': {}, 'hangman': {}, 'typing': {}, 'hokm': {}}
 active_gharch_games = {}
 
-# --- منطق عضویت اجباری و بن (با بهبود برای ارسال Alert) ---
+# --- منطق عضویت اجباری و بن (بدون تغییر) ---
 async def pre_command_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user = update.effective_user
     chat = update.effective_chat
@@ -234,10 +234,8 @@ async def force_join_middleware(update: Update, context: ContextTypes.DEFAULT_TY
     keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
     text = f"❗️{user.mention_html()} عزیز، برای استفاده از ربات ابتدا باید در کانال ما عضو شوی:\n\n{FORCED_JOIN_CHANNEL}"
     
-    # <<<--- تغییر اصلی: ارسال Alert در CallbackQuery --->>>
     if update.callback_query:
         await update.callback_query.answer("⚠️ برای انجام این کار باید ابتدا در کانال عضو شوید.", show_alert=True)
-        # ممکن است کاربر ربات را بلاک کرده باشد، پس ارسال پیام را در try/except قرار می‌دهیم
         try:
             await context.bot.send_message(user.id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         except:
@@ -247,7 +245,7 @@ async def force_join_middleware(update: Update, context: ContextTypes.DEFAULT_TY
     return False
 
 
-# --------------------------- RHINO GAME PANEL (بخش جدید) ---------------------------
+# --------------------------- RHINO GAME PANEL (بدون تغییر) ---------------------------
 async def show_game_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور اصلی برای نمایش پنل بازی‌ها به ادمین."""
     user = update.effective_user
@@ -350,11 +348,11 @@ async def rhino_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     elif action == "hads_kalame":
         await query.message.delete()
-        await hads_kalame_command(query.message, context) # استفاده مجدد از تابع اصلی
+        await hads_kalame_command(query.message, context) 
     
     elif action == "type_speed":
         await query.message.delete()
-        await type_command(query.message, context) # استفاده مجدد از تابع اصلی
+        await type_command(query.message, context) 
     
     elif action == "hads_addad":
         keyboard = [
@@ -400,7 +398,6 @@ async def rhino_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     
     elif action == "eteraf_default":
         await query.message.delete()
-        # فراخوانی تابع اصلی بدون context.args
         original_message = query.message
         original_message.text = "/eteraf"
         context.args = []
@@ -444,7 +441,6 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     input_type = waiting_info['type']
     message_id_to_edit = waiting_info['message_id']
     
-    # --- ورودی برای حدس عدد سفارشی ---
     if input_type == WAITING_FOR_CUSTOM_RANGE:
         del context.chat_data['waiting_for_input']
         try:
@@ -471,26 +467,20 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 text="فرمت اشتباه است. بازی لغو شد. لطفاً دوباره از پنل تلاش کنید.",
             )
 
-    # --- ورودی برای اعتراف سفارشی ---
     elif input_type == WAITING_FOR_CUSTOM_ETERAF:
         custom_text = update.message.text
         del context.chat_data['waiting_for_input']
         await update.message.delete()
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
         
-        # فراخوانی تابع اصلی با context.args
         original_message = update.message
         original_message.text = f"/eteraf {custom_text}"
         context.args = custom_text.split()
         await eteraf_command(original_message, context)
 
-    # --- ورودی برای گاد قارچ ---
     elif input_type == WAITING_FOR_GHARCH_GOD:
         del context.chat_data['waiting_for_input']
         await update.message.delete()
-        
-        # فراخوانی ConversationHandler قارچ با پیام جدید
-        # این کار ConversationHandler را به درستی آغاز می‌کند
         await gharch_command(update, context)
 
 
@@ -599,8 +589,6 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     chat_id = query.message.chat.id
     
-    # <<<--- تغییر اصلی: چک کردن عضویت اجباری قبل از هر اقدامی --->>>
-    # اگر کاربر عضو نباشد، `pre_command_check` هشدار را ارسال می‌کند و False برمی‌گرداند
     if not await pre_command_check(update, context):
         return
         
@@ -609,7 +597,6 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "start":
         await query.answer(); mode = data[2]; max_players = 4 if mode == '4p' else 2
         
-        # <<<--- تغییر اصلی: اضافه کردن متن عضویت اجباری --->>>
         text = (
             f" بازی حکم **{max_players} نفره** شروع شد.\n\n"
             f"برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید و سپس روی دکمه زیر کلیک کنید."
@@ -778,7 +765,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "noop":
         await query.answer()
 
-# --------------------------- GAME: GUESS THE NUMBER (با بهبود) ---------------------------
+# --------------------------- GAME: GUESS THE NUMBER (بدون تغییر) ---------------------------
 async def hads_addad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await pre_command_check(update, context): return ConversationHandler.END
     chat, user = update.effective_chat, update.effective_user
@@ -810,7 +797,6 @@ async def receive_range(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text(f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **{min_range}** و **{max_range}** انتخاب شده.", parse_mode=ParseMode.MARKDOWN)
     return GUESSING
 
-# این تابع جدید برای مدیریت حدس‌ها از همه بازیکنان است
 async def handle_guess_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in active_games['guess_number']: return
@@ -820,7 +806,7 @@ async def handle_guess_message(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         guess = int(convert_persian_to_english_numbers(update.message.text))
     except (ValueError, TypeError):
-        return # اگر پیام عدد نباشد، نادیده گرفته می‌شود
+        return
 
     secret_number = game_data['number']
     user = update.effective_user
@@ -837,6 +823,7 @@ async def cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if update.effective_chat.id in active_games['guess_number']: del active_games['guess_number'][update.effective_chat.id]
     await update.message.reply_text('بازی حدس عدد لغو شد.')
     return ConversationHandler.END
+
 # --------------------------- GAME: DOOZ (بدون تغییر) ---------------------------
 async def dooz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await pre_command_check(update, context): 
@@ -986,8 +973,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------------- GAME: HADS KALAME (بدون تغییر) ---------------------------
 async def hads_kalame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # این تابع اکنون می‌تواند هم از دستور و هم از پنل فراخوانی شود
-    # چون `update` می‌تواند `Message` یا `CallbackQuery.message` باشد، از `update.chat.id` استفاده می‌کنیم.
     if not await pre_command_check(update, context): return
     chat_id = update.chat.id
     if chat_id in active_games['hangman']: return await update.reply_text("یک بازی حدس کلمه فعال است.")
@@ -1030,7 +1015,8 @@ async def handle_letter_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
             if all(lives == 0 for lives in game['players'].values() if lives is not None):
                 await update.message.reply_text(f"☠️ همه باختید! کلمه صحیح `{game['word']}` بود.", parse_mode=ParseMode.MARKDOWN)
                 del active_games['hangman'][chat_id]
-# --------------------------- GAME: GHARCH & ETERAF (با بهبود) ---------------------------
+
+# --------------------------- GAME: GHARCH & ETERAF (بدون تغییر) ---------------------------
 async def gharch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await pre_command_check(update, context): return ConversationHandler.END
     if update.effective_chat.type == 'private':
@@ -1043,7 +1029,6 @@ async def gharch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     context.chat_data['starter_admin_id'] = update.effective_user.id
     
-    # اگر از طریق پنل آمده باشد، پیام قبلی ویرایش می‌شود، در غیر این صورت پیام جدید ارسال می‌شود
     text = (
         "🍄 **شروع بازی قارچ**\n\n"
         "لطفاً گاد بازی را مشخص کنید.\n"
@@ -1068,15 +1053,12 @@ async def receive_god_username(update: Update, context: ContextTypes.DEFAULT_TYP
     god_info = None
     message = update.message
     
-    # حالت ۱: منشن
     if message.entities and message.entities[0].type == MessageEntity.TEXT_MENTION:
         user = message.entities[0].user
         god_info = {'id': user.id, 'mention': user.mention_html()}
-    # حالت ۲: ریپلای
     elif message.reply_to_message:
         user = message.reply_to_message.from_user
         god_info = {'id': user.id, 'mention': user.mention_html()}
-    # حالت ۳: آیدی عددی یا یوزرنیم
     else:
         text_input = message.text.strip()
         if text_input.isdigit():
@@ -1087,7 +1069,7 @@ async def receive_god_username(update: Update, context: ContextTypes.DEFAULT_TYP
                 await message.reply_text("آیدی عددی یافت نشد. لطفاً دوباره تلاش کنید.", quote=True)
                 return ASKING_GOD_USERNAME
         elif text_input.startswith('@'):
-            god_info = {'id': None, 'username': text_input, 'mention': text_input} # آیدی بعداً در تایید گرفته می‌شود
+            god_info = {'id': None, 'username': text_input, 'mention': text_input}
         else:
             await message.reply_text("فرمت ورودی نامعتبر است. لطفاً یوزرنیم با @، آیدی عددی، یا منشن/ریپلای کنید.", quote=True)
             return ASKING_GOD_USERNAME
@@ -1203,7 +1185,6 @@ async def eteraf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot_username = (await context.bot.get_me()).username
     
     try:
-        # اگر از دستور استفاده شده، ریپلای می‌کند. اگر از پنل، پیام جدید می‌فرستد.
         if update.message:
             starter_message = await update.message.reply_text(starter_text)
         else:
@@ -1271,6 +1252,7 @@ async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT
     finally:
         if 'anon_target_chat' in context.user_data:
             del context.user_data['anon_target_chat']
+
 # --------------------------- GAME: TYPE SPEED (بدون تغییر) ---------------------------
 def create_typing_image(text: str) -> io.BytesIO:
     reshaped_text = arabic_reshaper.reshape(text)
@@ -1442,7 +1424,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         try:
             await context.bot.copy_message(chat_id=target_id, from_chat_id=update.message.reply_to_message.chat.id, message_id=update.message.reply_to_message.message_id)
             sent += 1
-            await asyncio.sleep(0.1) # برای جلوگیری از اسپم
+            await asyncio.sleep(0.1)
         except Exception as e:
             failed += 1
             logger.error(f"Broadcast failed for {target_id}: {e}")
@@ -1545,7 +1527,6 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             cur.execute("INSERT INTO groups (group_id, title, member_count) VALUES (%s, %s, %s) ON CONFLICT (group_id) DO UPDATE SET title = EXCLUDED.title, member_count = EXCLUDED.member_count;", (chat.id, chat.title, member_count))
             conn.commit()
 
-        # ... (بقیه کد بدون تغییر)
         report = f"➕ **ربات به گروه جدید اضافه شد:**\n\n🌐 نام: {chat.title}\n🆔: `{chat.id}`\n👥 اعضا: {member_count}\n\n👤 توسط: {user.mention_html()} (ID: `{user.id}`)"
         for owner_id in OWNER_IDS:
             try: await context.bot.send_message(owner_id, report, parse_mode=ParseMode.HTML)
@@ -1564,7 +1545,7 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             except: pass
             
 
-# ======================== MAIN FUNCTION (با ساختار جدید) ==========================
+# ======================== MAIN FUNCTION (ساختار نهایی) ==========================
 def main() -> None:
     setup_database()
     BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -1590,17 +1571,18 @@ def main() -> None:
         entry_points=[CommandHandler("hads_addad", hads_addad_command)],
         states={
             SELECTING_RANGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_range)],
-            GUESSING: [MessageHandler(filters.Regex(r'^[\d۰-۹]+$'), handle_guess_message)], # این حالت هیچوقت فعال نمی‌شود اما برای ساختار لازم است
+            GUESSING: [MessageHandler(filters.Regex(r'^[\d۰-۹]+$'), handle_guess_message)],
         },
         fallbacks=[CommandHandler('cancel', cancel_game)],
         per_user=False, per_chat=True
     )
-    # application.add_handler(guess_number_conv) # ما دیگر از این ConversationHandler استفاده نمی‌کنیم چون پنل روش بهتری دارد.
 
     # --- Command Handlers ---
     # پنل
     application.add_handler(CommandHandler("rhinogame", show_game_panel))
-    application.add_handler(MessageHandler(filters.Regex(r'^(?i)(بازی|شروع بازی|game|پنل)$') & filters.ChatType.GROUPS, show_game_panel))
+    # <<<--- خط اصلاح شده --->>>
+    application.add_handler(MessageHandler(filters.Regex(r'(?i)^(بازی|شروع بازی|game|پنل)$') & filters.ChatType.GROUPS, show_game_panel))
+    
     # دستورات اصلی
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -1610,7 +1592,7 @@ def main() -> None:
     application.add_handler(CommandHandler("hads_kalame", hads_kalame_command))
     application.add_handler(CommandHandler("type", type_command))
     application.add_handler(CommandHandler("eteraf", eteraf_command))
-    application.add_handler(CommandHandler("hads_addad", hads_addad_command)) # برای حفظ سازگاری با قبل
+    application.add_handler(CommandHandler("hads_addad", hads_addad_command))
     # دستورات مالک
     application.add_handler(CommandHandler("setstart", set_start_command))
     application.add_handler(CommandHandler("stats", stats_command))
@@ -1627,15 +1609,10 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
 
     # --- Message Handlers (با اولویت) ---
-    # ۱. اول ورودی‌های خاص ادمین برای پنل را بررسی می‌کند
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_admin_input), group=1)
-    # ۲. سپس حدس‌های عددی را بررسی می‌کند
     application.add_handler(MessageHandler(filters.Regex(r'^[\d۰-۹]+$') & filters.ChatType.GROUPS, handle_guess_message), group=2)
-    # ۳. سپس حدس حروف کلمه
     application.add_handler(MessageHandler(filters.Regex(r'^[آ-ی]$') & filters.ChatType.GROUPS, handle_letter_guess), group=2)
-    # ۴. سپس تایپ سرعتی
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_typing_attempt), group=2)
-    # ۵. پیام‌های ناشناس در خصوصی
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_anonymous_message))
     
     # --- سایر Handler ها ---
