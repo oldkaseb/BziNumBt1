@@ -1137,36 +1137,45 @@ async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT
         if 'anon_target_chat' in context.user_data:
             del context.user_data['anon_target_chat']
 
-# --------------------------- GAME: TYPE SPEED (با اصلاح عکس) ---------------------------
-# --------------------------- GAME: TYPE SPEED (با اصلاح عکس) ---------------------------
+# --------------------------- GAME: TYPE SPEED (با اصلاح عکس) --------------------------
 def create_typing_image(text: str) -> io.BytesIO:
     reshaped_text = arabic_reshaper.reshape(text)
     bidi_text = get_display(reshaped_text)
     try:
+        # فرض بر وجود فونت Vazir.ttf است، در غیر این صورت از فونت پیش‌فرض استفاده می‌شود.
         font = ImageFont.truetype("Vazir.ttf", 24)
     except IOError:
         logger.warning("Vazir.ttf font not found. Falling back to default.")
         font = ImageFont.load_default()
     
+    # محاسبه اندازه تصویر لازم
     dummy_img, draw = Image.new('RGB', (1, 1)), ImageDraw.Draw(Image.new('RGB', (1, 1)))
     _, _, w, h = draw.textbbox((0, 0), bidi_text, font=font)
+    
+    # ایجاد تصویر و نوشتن متن
     img = Image.new('RGB', (w + 40, h + 40), color=(255, 255, 255))
     ImageDraw.Draw(img).text((20, 20), bidi_text, fill=(0, 0, 0), font=font)
+    
+    # ذخیره در حافظه موقت
     bio = io.BytesIO()
     bio.name = 'image.jpeg'
     img.save(bio, 'JPEG')
     bio.seek(0)
     return bio
 
-# این تابع باید در سطح بالای ماژول باشد (هیچ فاصله‌ای قبل از 'async' نیست)
 async def type_command(update: Update, context: ContextTypes.DEFAULT_TYPE): 
     chat_id = update.chat.id
     if chat_id in active_games['typing']: return await update.reply_text("یک بازی تایپ سرعتی فعال است.")
-        sentence = random.choice(TYPING_SENTENCES)
-        active_games['typing'][chat_id] = {"sentence": sentence, "start_time": datetime.now()}
-await context.bot.send_message(chat_id, "بازی تایپ سرعتی ۳... ۲... ۱...")
-image_file = create_typing_image(sentence)
-await context.bot.send_photo(chat_id, photo=image_file, caption="سریع تایپ کنید!")
+    
+    sentence = random.choice(TYPING_SENTENCES)
+    active_games['typing'][chat_id] = {"sentence": sentence, "start_time": datetime.now()}
+    
+    # پیام اولیه شروع
+    await context.bot.send_message(chat_id, "بازی تایپ سرعتی ۳... ۲... ۱...")
+    
+    # ارسال عکس حاوی متن
+    image_file = create_typing_image(sentence)
+    await context.bot.send_photo(chat_id, photo=image_file, caption="سریع تایپ کنید!")
 
 async def handle_typing_attempt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
