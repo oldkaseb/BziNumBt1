@@ -37,8 +37,10 @@ GROUP_INSTALL_LIMIT = 50
 INITIAL_LIVES = 6
 # --- تعریف حالت‌های مکالمه ---
 (ASKING_GOD_USERNAME, CONFIRMING_GOD) = range(2)
-# <<<--- حالت جدید برای بازی دوز --->>>
 (DOOZ_ASKING_OPPONENT,) = range(2,3)
+# <<<--- حالت جدید برای بازی اعتراف --->>>
+(ETERAF_ASKING_TEXT,) = range(3,4)
+
 
 # --- لیست کلمات و جملات (بدون تغییر) ---
 WORD_LIST = [
@@ -212,6 +214,7 @@ async def pre_command_check(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     
     return await force_join_middleware(update, context)
 
+# <<<--- تابع عضویت اجباری با قابلیت حذف خودکار پیام --->>>
 async def force_join_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user = update.effective_user
     if not user: return False
@@ -226,11 +229,20 @@ async def force_join_middleware(update: Update, context: ContextTypes.DEFAULT_TY
     text = f"❗️{user.mention_html()}، برای استفاده از ربات ابتدا باید در کانال ما عضو شوی و مجددا ربات را استارت کنی:\n\n{FORCED_JOIN_CHANNEL}"
 
     target_chat = update.effective_chat
+    sent_message = None
     if update.callback_query:
         await update.callback_query.answer()
-        await target_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        sent_message = await target_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     elif update.message:
-        await target_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        sent_message = await target_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    
+    if sent_message:
+        await asyncio.sleep(8)
+        try:
+            await sent_message.delete()
+        except Exception:
+            pass # اگر پیام قبلا حذف شده بود، مشکلی نیست
+
     return False
 
 # --------------------------- GAME: HOKM (نسخه نهایی) ---------------------------
@@ -589,14 +601,14 @@ async def dooz_start_direct_challenge(update: Update, context: ContextTypes.DEFA
     """مرحله اول ConversationHandler برای چالش مستقیم دوز."""
     query = update.callback_query
     await query.answer()
-    # آیدی کاربر شروع کننده را در حافظه موقت ذخیره می‌کنیم
     context.chat_data['dooz_challenger_id'] = query.from_user.id
+    context.chat_data['dooz_panel_message_id'] = query.message.message_id
     
     text = (
         "👤 **تعیین حریف برای بازی دوز**\n\n"
-        "لطفاً یوزرنیم (مثلاً @username)، آیدی عددی یا منشن حریف مورد نظر خود را در پیام بعدی ارسال کنید."
+        "لطفاً حریف مورد نظر خود را **منشن** کنید (مثلاً: `/dooz @username` را ریپلای کنید) یا **آیدی عددی** او را در پیام بعدی ارسال کنید."
     )
-    keyboard = [[InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="panel_show_main")]]
+    keyboard = [[InlineKeyboardButton("🔙 انصراف و بازگشت به پنل", callback_data="panel_show_main")]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     return DOOZ_ASKING_OPPONENT
@@ -604,18 +616,18 @@ async def dooz_start_direct_challenge(update: Update, context: ContextTypes.DEFA
 async def dooz_receive_opponent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """مرحله دوم: دریافت اطلاعات حریف و ارسال چالش."""
     challenger_id = context.chat_data.get('dooz_challenger_id')
+    panel_message_id = context.chat_data.get('dooz_panel_message_id')
+    
+    if not challenger_id: return ConversationHandler.END # اگر به هر دلیلی آیدی شروع کننده نبود
+
     challenger = await context.bot.get_chat(challenger_id)
     message = update.message
     
     challenged_user = None
+    
     # بهترین روش: پیدا کردن از طریق منشن
     if message.entities:
         for entity in message.entities:
-            if entity.type == 'mention':
-                username = message.text[entity.offset:entity.offset+entity.length]
-                # این بخش نیاز به دیتابیس یا روش دیگری برای تبدیل یوزرنیم به آیدی دارد
-                # فعلا به روش‌های دیگر اکتفا می‌کنیم
-                pass
             if entity.type == 'text_mention':
                 challenged_user = entity.user
     
@@ -626,9 +638,8 @@ async def dooz_receive_opponent(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             logger.error(f"Could not find user by ID for Dooz: {e}")
 
-    # اگر هیچکدام جواب نداد، به کاربر اطلاع می‌دهیم
     if not challenged_user:
-        await message.reply_text("کاربر مورد نظر یافت نشد. لطفاً مطمئن شوید که کاربر را به درستی منشن کرده‌اید یا آیدی عددی او را وارد کرده‌اید.")
+        await message.reply_text("کاربر مورد نظر یافت نشد. لطفاً مطمئن شوید که کاربر را به درستی منشن کرده‌اید یا آیدی عددی او را وارد کرده‌اید. (یوزرنیم ساده مثل @username کار نمی‌کند)")
         return DOOZ_ASKING_OPPONENT
 
     if challenged_user.is_bot or challenged_user.id == challenger.id:
@@ -637,6 +648,10 @@ async def dooz_receive_opponent(update: Update, context: ContextTypes.DEFAULT_TY
     
     # حذف پیام‌های اضافی و ارسال چالش
     await message.delete()
+    if panel_message_id:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=panel_message_id)
+        except: pass
     
     challenged_mention = challenged_user.mention_html()
     cb_info = challenged_user.username if challenged_user.username else str(challenged_user.id)
@@ -651,7 +666,6 @@ async def dooz_receive_opponent(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode=ParseMode.HTML
     )
-    # پایان مکالمه
     return ConversationHandler.END
 
 
@@ -696,7 +710,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split('_')
     action = data[1]
 
-    if action == "join": # <<<--- منطق جدید برای پیوستن به لابی --->>>
+    if action == "join":
         creator_id = int(data[2])
         if user.id == creator_id:
             await query.answer("شما نمی‌توانید به بازی خودتان ملحق شوید!", show_alert=True)
@@ -705,7 +719,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         creator_user = await context.bot.get_chat(creator_id)
 
-        # شروع بازی بین دو نفر
         chat_id = query.message.chat.id
         game_id = query.message.message_id
         if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
@@ -984,6 +997,41 @@ async def cancel_gharch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text("فرآیند ساخت بازی قارچ لغو شد.")
     return ConversationHandler.END
 
+# <<<--- توابع جدید برای بازی اعتراف سفارشی --->>>
+async def eteraf_start_custom(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    # آیدی ادمین را ذخیره می‌کنیم تا فقط به پیام او گوش دهیم
+    context.chat_data['eteraf_admin_id'] = query.from_user.id
+    
+    text = "💬 لطفاً متن سفارشی خود را برای شروع اعتراف ارسال کنید:"
+    keyboard = [[InlineKeyboardButton("🔙 انصراف", callback_data="panel_show_main")]]
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    return ETERAF_ASKING_TEXT
+
+async def eteraf_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    # چک می‌کنیم که پیام از طرف همان ادمین باشد
+    if update.effective_user.id != context.chat_data.get('eteraf_admin_id'):
+        return ETERAF_ASKING_TEXT
+
+    custom_text = update.message.text
+    chat_id = update.effective_chat.id
+    bot_username = (await context.bot.get_me()).username
+    
+    # حذف پیام درخواست متن و پیام خود ادمین
+    await update.message.delete()
+    # در اینجا ما آیدی پیام "لطفا متن را ارسال کنید" را نداریم، پس آن را حذف نمی‌کنیم
+    # کاربر می‌تواند دستی آن را حذف کند
+    
+    starter_message = await context.bot.send_message(chat_id=chat_id, text=custom_text)
+    keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
+    await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+
+    return ConversationHandler.END
+
+
 async def eteraf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == 'private':
         await update.message.reply_text("این دستور فقط در گروه‌ها قابل استفاده است.")
@@ -1182,7 +1230,6 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         await query.message.delete()
 
-    # <<<--- رفع مشکل بازی حکم --->>>
     elif data == "panel_show_hokm":
         await query.answer()
         text = "⚖️ **بازی حکم**\n\nحالت بازی دو نفره یا چهار نفره را انتخاب کنید:"
@@ -1195,7 +1242,6 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # <<<--- سیستم جدید بازی دوز --->>>
     elif data == "panel_show_dooz":
         await query.answer()
         text = "❌⭕️ **شروع بازی دوز**\n\nچگونه می‌خواهید بازی را شروع کنید؟"
@@ -1240,17 +1286,14 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         image_file = create_typing_image(sentence)
         await chat.send_photo(photo=image_file, caption="سریع تایپ کنید!")
 
-    # --- بازی‌های مخصوص ادمین ---
     elif data in ["panel_show_hads_addad", "panel_show_gharch", "panel_show_eteraf"]:
         if not await is_group_admin(user.id, chat.id, context):
-            await query.answer("❌ این بازی فقط توسط ادمین‌ها قابل شروع است.", show_alert=True)
+            await query.answer("❌ این قابلیت فقط توسط ادمین‌ها قابل استفاده است.", show_alert=True)
             return
-
-        await query.answer()
-        await query.message.delete()
         
         if data == "panel_show_hads_addad":
-            # شروع بازی با حالت پیش‌فرض (مثلا ۱ تا ۱۰۰)
+            await query.answer()
+            await query.message.delete()
             if chat.id in active_games['guess_number']:
                 await chat.send_message("یک بازی حدس عدد در این گروه فعال است.")
                 return
@@ -1259,15 +1302,29 @@ async def game_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             await chat.send_message(f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **1** و **100** انتخاب شده.", parse_mode=ParseMode.MARKDOWN)
             
         elif data == "panel_show_gharch":
+            await query.answer()
+            await query.message.delete()
             await gharch_command(query.message, context)
             
         elif data == "panel_show_eteraf":
-            # اجرای اعتراف با متن پیش‌فرض
-            starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس (که به این پیام ریپلای می‌شود)، از دکمه زیر استفاده کنید."
-            bot_username = (await context.bot.get_me()).username
-            starter_message = await chat.send_message(starter_text)
-            keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat.id}_{starter_message.message_id}")]]
-            await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.answer()
+            text = "🤫 **شروع اعتراف ناشناس**\n\nلطفاً حالت شروع بازی را انتخاب کنید:"
+            keyboard = [
+                [InlineKeyboardButton("📝 با متن پیش‌فرض", callback_data="eteraf_start_default")],
+                [InlineKeyboardButton("✍️ با متن سفارشی", callback_data="eteraf_start_custom")],
+                [InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="panel_show_main")]
+            ]
+            await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "eteraf_start_default":
+        await query.answer()
+        await query.message.delete()
+        starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس (که به این پیام ریپلای می‌شود)، از دکمه زیر استفاده کنید."
+        bot_username = (await context.bot.get_me()).username
+        starter_message = await chat.send_message(starter_text)
+        keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat.id}_{starter_message.message_id}")]]
+        await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        
 
 # =================================================================
 # ================= OWNER & CORE COMMANDS START ===================
