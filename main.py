@@ -1138,6 +1138,7 @@ async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT
             del context.user_data['anon_target_chat']
 
 # --------------------------- GAME: TYPE SPEED (با اصلاح عکس) ---------------------------
+# --------------------------- GAME: TYPE SPEED (با اصلاح عکس) ---------------------------
 def create_typing_image(text: str) -> io.BytesIO:
     reshaped_text = arabic_reshaper.reshape(text)
     bidi_text = get_display(reshaped_text)
@@ -1156,6 +1157,17 @@ def create_typing_image(text: str) -> io.BytesIO:
     img.save(bio, 'JPEG')
     bio.seek(0)
     return bio
+
+# این تابع باید در سطح بالای ماژول باشد (هیچ فاصله‌ای قبل از 'async' نیست)
+async def type_command(update: Update, context: ContextTypes.DEFAULT_TYPE): 
+    chat_id = update.chat.id
+    if chat_id in active_games['typing']: return await update.reply_text("یک بازی تایپ سرعتی فعال است.")
+    
+    sentence = random.choice(TYPING_SENTENCES)
+    active_games['typing'][chat_id] = {"sentence": sentence, "start_time": datetime.now()}
+    await context.bot.send_message(chat_id, "بازی تایپ سرعتی ۳... ۲... ۱...")
+    image_file = create_typing_image(sentence)
+    await context.bot.send_photo(chat_id, photo=image_file, caption="سریع تایپ کنید!")
 
  async def type_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.chat.id
