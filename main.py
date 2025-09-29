@@ -1252,6 +1252,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=owner_id, text=report_text, parse_mode=ParseMode.HTML)
         except:
             pass
+# --- دستور موقت برای تست عضویت ---
+async def check_membership_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_owner(update.effective_user.id):
+        await update.message.reply_text("این دستور مخصوص مالک ربات است.")
+        return
+    
+    user_to_check = update.effective_user
+    await update.message.reply_text(f"⏳ در حال بررسی عضویت کاربر {user_to_check.id} در کانال {FORCED_JOIN_CHANNEL}...")
+    
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user_to_check.id)
+        await update.message.reply_text(
+            f"✅ **موفق!**\n"
+            f"پاسخ دریافت شده از تلگرام:\n"
+            f"User ID: `{member.user.id}`\n"
+            f"Status: `{member.status}`"
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ **خطا!**\n"
+            f"ربات نتوانست اطلاعات عضویت را دریافت کند.\n"
+            f"متن خطا:\n`{e}`"
+        )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await force_join_middleware(update, context): return
@@ -1529,7 +1552,7 @@ def main() -> None:
     application.add_handler(CommandHandler("unban_user", unban_user_command))
     application.add_handler(CommandHandler("ban_group", ban_group_command))
     application.add_handler(CommandHandler("unban_group", unban_group_command))
-
+    application.add_handler(CommandHandler("check", check_membership_command))
     # --- اولویت ۳: CallbackQuery Handlers ---
     application.add_handler(CallbackQueryHandler(hokm_callback, pattern=r'^hokm_'))
     application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
