@@ -562,6 +562,11 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.HTML
         )
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
         return
 
     game_id = int(data[2])
@@ -812,6 +817,11 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.HTML
         )
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
         return
 
     game_id = int(data[2])
@@ -1130,23 +1140,23 @@ async def eteraf_start_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     data = query.data.split('_')
-    eteraf_type = data[2] # default or custom
+    eteraf_type = data[2] 
 
     if eteraf_type == "default":
-        starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس (که به این پیام ریپلای می‌شود)، از دکمه زیر استفاده کنید."
+        starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس، از دکمه زیر استفاده کنید."
         bot_username = (await context.bot.get_me()).username
         try:
-            # اینجا به جای ویرایش پیام قبلی، یک پیام جدید می‌فرستیم چون ماهیت بازی اعتراف اینگونه است
             starter_message = await context.bot.send_message(chat_id, starter_text)
             keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
             await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-            await query.message.delete() # پیام پنل را پاک می‌کنیم
+            await query.message.delete() 
         except Exception as e:
             logger.error(f"Error in eteraf_command: {e}")
-            await context.bot.send_message(chat_id, f"خطایی در ارسال پیام رخ داد: {e}")
         return
 
     elif eteraf_type == "custom":
+        # ##### تغییر جدید: ذخیره آیدی پیام برای حذف در آینده #####
+        context.chat_data['eteraf_prompt_message_id'] = query.message.message_id
         await query.edit_message_text("لطفاً متن دلخواه خود را برای شروع اعتراف ارسال کنید.\nبرای لغو /cancel را ارسال کنید.")
         return ENTERING_ETERAF_TEXT
 
@@ -1156,7 +1166,7 @@ async def receive_eteraf_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     bot_username = (await context.bot.get_me()).username
     
     try:
-        # مشابه حالت پیش‌فرض، یک پیام جدید برای اعتراف می‌سازیم
+        # ربات پیام جدید اعتراف را با دکمه ارسال می‌کند
         starter_message = await context.bot.send_message(chat_id, custom_text)
         keyboard = [[InlineKeyboardButton("🤫 ارسال اعتراف", url=f"https://t.me/{bot_username}?start=eteraf_{chat_id}_{starter_message.message_id}")]]
         await starter_message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
@@ -1164,8 +1174,18 @@ async def receive_eteraf_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Error in eteraf_command (custom): {e}")
         await update.message.reply_text(f"خطایی در ارسال پیام رخ داد: {e}")
     finally:
-        # بازگشت به پنل اصلی
-        await rsgame_command(update, context)
+        # پیام قبلی ربات ("لطفا متن خود را ارسال کنید") حذف می‌شود
+        prompt_message_id = context.chat_data.pop('eteraf_prompt_message_id', None)
+        try:
+            if prompt_message_id:
+                await context.bot.delete_message(chat_id=chat_id, message_id=prompt_message_id)
+            
+            # ##### تغییر اصلی: خط زیر حذف شد #####
+            # await update.message.delete() # -> این خط دیگر وجود ندارد و پیام شما باقی می‌ماند.
+
+        except Exception:
+            pass
+            
         return ConversationHandler.END
 
 async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1590,8 +1610,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(type_start_callback, pattern='^type_start$'))
     application.add_handler(CallbackQueryHandler(eteraf_start_callback, pattern='^eteraf_start_default$'))
     # مدیریت داخلی بازی‌ها
-    application.add_handler(CallbackQueryHandler(hokm_callback, pattern=r'^hokm_'))
-    application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
+    application.add_handler(CallbackQueryHandler(back, pattern=r'^hokm_'))
+    application.add_handler(CallbackQueryHandler(back, pattern=r'^dooz_'))
     
     # --- Message Handlers (باید اولویت کمتری داشته باشند) ---
     application.add_handler(MessageHandler(filters.Regex(r'^[آ-ی]$') & filters.ChatType.GROUPS, handle_letter_guess))
