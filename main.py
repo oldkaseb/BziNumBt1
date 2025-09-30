@@ -312,7 +312,7 @@ async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🏆 بازی‌های کارتی و گروهی", callback_data=f"rsgame_cat_board_{user_id}")],
             [InlineKeyboardButton("✍️ بازی‌های تایپی و سرعتی", callback_data=f"rsgame_cat_typing_{user_id}")],
             [InlineKeyboardButton("🤫 بازی‌های ناشناس (ویژه ادمین)", callback_data=f"rsgame_cat_anon_{user_id}")],
-            #[InlineKeyboardButton("✖️ بستن پنل", callback_data=f"rsgame_close_{user_id}")]
+            [InlineKeyboardButton("✖️ بستن پنل", callback_data=f"rsgame_close_{user_id}")]
         ]
         
         if update.message:
@@ -1688,34 +1688,34 @@ def main() -> None:
 
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # --- Conversation Handlers (باید اولویت بالاتری داشته باشند) ---
+    # --- Conversation Handlers (الگوها اصلاح شدند) ---
     gharch_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(gharch_start_callback, pattern='^gharch_start$')],
+        entry_points=[CallbackQueryHandler(gharch_start_callback, pattern='^gharch_start_')],
         states={
             ASKING_GOD_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_god_username)],
             CONFIRMING_GOD: [CallbackQueryHandler(confirm_god, pattern=r'^gharch_confirm_god_')],
         },
         fallbacks=[CommandHandler('cancel', cancel_gharch_conv)],
-        per_user=False, per_chat=True,
+        per_user=False, per_chat=True, per_message=True,
     )
     
     guess_number_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(hads_addad_start_callback, pattern='^hads_addad_start$')],
+        entry_points=[CallbackQueryHandler(hads_addad_start_callback, pattern='^hads_addad_start_')],
         states={
             SELECTING_RANGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_range)],
             GUESSING: [MessageHandler(filters.Regex(r'^[\d۰-۹]+$'), handle_guess_conversation)],
         },
         fallbacks=[CommandHandler('cancel', cancel_game_conversation)],
-        per_user=False, per_chat=True
+        per_user=False, per_chat=True, per_message=True,
     )
 
     eteraf_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(eteraf_start_callback, pattern='^eteraf_start_custom$')],
+        entry_points=[CallbackQueryHandler(eteraf_start_callback, pattern='^eteraf_start_custom_')],
         states={
             ENTERING_ETERAF_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_eteraf_text)]
         },
-        fallbacks=[CommandHandler('cancel', cancel_game_conversation)], # از همان تابع لغو مشترک استفاده می‌کند
-        per_user=True, per_chat=False # این مکالمه باید برای هر کاربر جدا باشد
+        fallbacks=[CommandHandler('cancel', cancel_game_conversation)],
+        per_user=True, per_chat=False, per_message=True,
     )
 
     application.add_handler(gharch_conv)
@@ -1725,11 +1725,11 @@ def main() -> None:
     # --- Command Handlers ---
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("rsgame", rsgame_command))
-
     application.add_handler(CommandHandler("stop", stop_games_command))
     
     # دستورات مالک ربات
     application.add_handler(CommandHandler("setstart", set_start_command, filters=filters.User(OWNER_IDS)))
+    application.add_handler(CommandHandler("ping", ping_command, filters=filters.User(OWNER_IDS))) # دستور پینگ که قبلا اضافه کردیم
     application.add_handler(CommandHandler("stats", stats_command, filters=filters.User(OWNER_IDS)))
     application.add_handler(CommandHandler("fwdusers", fwdusers_command, filters=filters.User(OWNER_IDS)))
     application.add_handler(CommandHandler("fwdgroups", fwdgroups_command, filters=filters.User(OWNER_IDS)))
@@ -1741,25 +1741,23 @@ def main() -> None:
     application.add_handler(CommandHandler("ban_group", ban_group_command, filters=filters.User(OWNER_IDS)))
     application.add_handler(CommandHandler("unban_group", unban_group_command, filters=filters.User(OWNER_IDS)))
 
+    # --- CallbackQuery Handlers (الگوها اصلاح شدند) ---
     application.add_handler(CallbackQueryHandler(rsgame_check_join_callback, pattern=r'^rsgame_check_join$'))
-
-    application.add_handler(CallbackQueryHandler(rsgame_close_callback, pattern=r'^rsgame_close$'))
-    # پنل اصلی
+    application.add_handler(CallbackQueryHandler(rsgame_close_callback, pattern=r'^rsgame_close_'))
     application.add_handler(CallbackQueryHandler(rsgame_callback_handler, pattern=r'^rsgame_cat_'))
-    application.add_handler(CallbackQueryHandler(rsgame_pv_callback, pattern=r'^rsgame_cat_main_pv$'))
+    
     # شروع بازی‌ها از پنل
-    application.add_handler(CallbackQueryHandler(hads_kalame_start_callback, pattern='^hads_kalame_start$'))
-    application.add_handler(CallbackQueryHandler(type_start_callback, pattern='^type_start$'))
-    application.add_handler(CallbackQueryHandler(eteraf_start_callback, pattern='^eteraf_start_default$'))
+    application.add_handler(CallbackQueryHandler(hads_kalame_start_callback, pattern='^hads_kalame_start_'))
+    application.add_handler(CallbackQueryHandler(type_start_callback, pattern='^type_start_'))
+    application.add_handler(CallbackQueryHandler(eteraf_start_callback, pattern='^eteraf_start_default_'))
+    
     # مدیریت داخلی بازی‌ها
     application.add_handler(CallbackQueryHandler(hokm_callback, pattern=r'^hokm_'))
     application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
 
+    # --- Message Handlers ---
     application.add_handler(MessageHandler(filters.Regex(r'^راهنما$') & filters.ChatType.GROUPS, text_help_trigger))
-
     application.add_handler(MessageHandler(filters.Regex(r'^پینگ$') & filters.User(OWNER_IDS), ping_command))
-    
-    # --- Message Handlers (باید اولویت کمتری داشته باشند) ---
     application.add_handler(MessageHandler(filters.Regex(r'^[آ-ی]$') & filters.ChatType.GROUPS, handle_letter_guess))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_anonymous_message))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_typing_attempt))
@@ -1767,8 +1765,5 @@ def main() -> None:
     # --- سایر Handler ها ---
     application.add_handler(ChatMemberHandler(track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     
-    logger.info("Bot is starting with the new refactored logic...")
+    logger.info("Bot is starting with corrected callback patterns...")
     application.run_polling()
-
-if __name__ == "__main__":
-    main()
