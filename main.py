@@ -33,7 +33,7 @@ OWNER_IDS = [7662192190, 6041119040] # آیدی‌های عددی ادمین‌�
 SUPPORT_USERNAME = "OLDKASEB" # یوزرنیم پشتیبانی بدون @
 FORCED_JOIN_CHANNEL = "@RHINOSOUL_TM" # کانال عضویت اجباری با @
 GROUP_INSTALL_LIMIT = 50 # حداکثر تعداد گروه‌هایی که ربات می‌تواند در آن‌ها نصب شود
-INITIAL_LIVES = 6 # تعداد جان اولیه در بازی حدس کلمه
+INITIAL_LIVES = 12 # تعداد جان اولیه در بازی حدس کلمه
 
 # --- تعریف حالت‌های مکالمه ---
 # برای بازی قارچ
@@ -245,7 +245,7 @@ async def check_join_for_alert(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if update.callback_query:
         await update.callback_query.answer(
-            "برای پیوستن به بازی باید در کانال عضو شوید!",
+            " @RHINOSOUL_TM برای پیوستن به بازی باید در کانال عضو شوید",
             show_alert=True
         )
     return False
@@ -272,7 +272,7 @@ async def check_forced_join(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # تشخیص اینکه پاسخ به پیام باشد یا به کلیک روی دکمه
     if update.callback_query:
         await update.callback_query.answer(
-            "برای ادامه بازی باید در کانال عضو شوید.",
+            " @RHINOSOUL_TM برای ادامه بازی باید در کانال عضو شوید",
             show_alert=True
         )
     elif update.message:
@@ -369,14 +369,14 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     keyboard = []
     
     if category == "board":
-        text = "🏆 دسته بندی بازی‌های کارتی و گروهی:\n(عضویت اجباری برای پیوستن به بازی الزامی است)"
+        text = "🏆 دسته بندی بازی‌های کارتی و گروهی:\n(عضویت اجباری برای پیوستن به بازی الزامی است)\n @RHINOSOUL_TM کانال ما"
         keyboard = [
             [InlineKeyboardButton(" حکم ۲ نفره ", callback_data="hokm_start_2p"), InlineKeyboardButton(" حکم ۴ نفره ", callback_data="hokm_start_4p")],
             [InlineKeyboardButton(" دوز (دو نفره) ", callback_data="dooz_start_2p")],
             [InlineKeyboardButton(" بازگشت ", callback_data="rsgame_cat_main")]
         ]
     elif category == "typing":
-        text = "✍️ دسته بندی بازی‌های تایپی و سرعتی (برای همه آزاد است):"
+        text = "✍️ دسته بندی بازی‌های تایپی و سرعتی (بدون اجبار عضویت):"
         keyboard = [
             [InlineKeyboardButton(" حدس کلمه ", callback_data="hads_kalame_start")],
             [InlineKeyboardButton(" تایپ سرعتی ", callback_data="type_start")],
@@ -391,9 +391,9 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             
         text = "🤫 دسته بندی بازی‌های ناشناس (ویژه ادمین):"
         keyboard = [
-            [InlineKeyboardButton(" اعتراف (پیش‌فرض) ", callback_data="eteraf_start_default")],
-            [InlineKeyboardButton(" اعتراف (سفارشی) ", callback_data="eteraf_start_custom")],
-            [InlineKeyboardButton(" قارچ (گاد) ", callback_data="gharch_start")],
+            [InlineKeyboardButton(" اعتراف (متن پیش‌فرض) ", callback_data="eteraf_start_default")],
+            [InlineKeyboardButton(" اعتراف (متن سفارشی) ", callback_data="eteraf_start_custom")],
+            [InlineKeyboardButton(" قارچ (با تظارت گاد بازی) ", callback_data="gharch_start")],
             [InlineKeyboardButton(" بازگشت ", callback_data="rsgame_cat_main")]
         ]
         
@@ -558,7 +558,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [[InlineKeyboardButton(f"پیوستن به بازی (1/{max_players})", callback_data=f"hokm_join_{game_id}")]]
         await sent_message.edit_text(
-            f"بازی حکم {max_players} نفره توسط {user.mention_html()} ساخته شد! منتظر بازیکنان...", 
+            f"بازی حکم {max_players} نفره توسط {user.mention_html()} ساخته شد! منتظر بازیکنان...\n @RHINOSOUL_TM برای شرکت در بازی عضو کانال شوید", 
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.HTML
         )
@@ -594,7 +594,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         num_players = len(game['players'])
 
         if num_players < max_players:
-            keyboard = [[InlineKeyboardButton(f"پیوستن به بازی ({num_players}/{max_players})", callback_data=f"hokm_join_{game_id}")]]
+            keyboard = [[InlineKeyboardButton(f"پیوستن به بازی ({num_players}/{max_players})\n @RHINOSOUL_TM برای پیوستن به بازی عضو کانال شوید", callback_data=f"hokm_join_{game_id}")]]
             await query.edit_message_text(f"بازی حکم (ID: {game_id})\nبازیکنان وارد شده: {num_players}/{max_players}", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             p_ids = [p['id'] for p in game['players']]
@@ -813,7 +813,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [[InlineKeyboardButton("پیوستن به بازی (1/2)", callback_data=f"dooz_join_{game_id}")]]
         await sent_message.edit_text(
-            f"بازی دوز توسط {user.mention_html()} ساخته شد! منتظر حریف...", 
+            f"بازی دوز توسط {user.mention_html()} ساخته شد! منتظر حریف...\n @RHINOSOUL_TM برای پیوستن به بازی عضو کانال شوید", 
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.HTML
         )
@@ -1294,7 +1294,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- بخش ۳: ارسال پیام خوشامدگویی (سفارشی یا پیش‌فرض) ---
     keyboard = [
         [InlineKeyboardButton("➕ افزودن ربات به گروه", url=f"https://t.me/{(await context.bot.get_me()).username}?startgroup=true")],
-        [InlineKeyboardButton("🎮 پنل بازی‌ها", callback_data="rsgame_cat_main_pv")], # دکمه پنل در PV
+        #[InlineKeyboardButton("🎮 پنل بازی‌ها", callback_data="rsgame_cat_main_pv")], # دکمه پنل در PV
         [InlineKeyboardButton("👤 ارتباط با پشتیبان", url=f"https://t.me/{SUPPORT_USERNAME}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
