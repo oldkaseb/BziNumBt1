@@ -260,6 +260,221 @@ async def show_game_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("به پنل مدیریت بازی راینو خوش آمدید.", reply_markup=InlineKeyboardMarkup(keyboard))
 
+async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """کامند /rsgame برای نمایش پنل داینامیک."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if chat.type == 'private':
+        return await update.message.reply_text("این دستور فقط در گروه‌ها کار می‌کند.")
+    
+    # --- مرحله ۱: چک عضویت ---
+    if await is_owner(user.id):
+        await show_rsgame_panel(update, context, is_callback=False, check_ok=True)
+        return
+        
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+        is_member = member.status in ['member', 'administrator', 'creator']
+    except Exception:
+        is_member = True 
+        logger.warning(f"Could not check channel membership for {user.id}. Assuming member.")
+
+    if is_member:
+        await show_rsgame_panel(update, context, is_callback=False, check_ok=True)
+    else:
+        keyboard = [
+            [InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")],
+            [InlineKeyboardButton("✅ عضو شدم (بررسی)", callback_data=f"rsgame_check_join_{user.id}")]
+        ]
+        text = f"❗️ {user.mention_html()} عزیز، برای استفاده از بازی‌ها ابتدا باید در کانال ما عضو شوی."
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+
+async def show_rsgame_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool, check_ok: bool = False):
+    """نمایش لیست بازی‌ها پس از تأیید عضویت یا مستقیماً."""
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    if is_callback and not check_ok:
+        try:
+            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+            if member.status not in ['member', 'administrator', 'creator']:
+                return await update.callback_query.answer("⚠️ هنوز عضو کانال نشده‌اید! لطفا ابتدا عضو شوید.", show_alert=True)
+        except Exception:
+            pass
+
+    keyboard = [
+        [InlineKeyboardButton("🃏 حکم (۲ نفره)", callback_data="rsgame_start_hokm_2p"), InlineKeyboardButton("🃏 حکم (۴ نفره)", callback_data="rsgame_start_hokm_4p")],
+        [InlineKeyboardButton("🔢 حدس عدد", callback_data="rsgame_hads_addad"), InlineKeyboardButton("🕵️‍♂️ حدس کلمه", callback_data="rsgame_hads_kalame")],
+        [InlineKeyboardButton("⌨️ تایپ سرعتی", callback_data="rsgame_type_speed"), InlineKeyboardButton("⭕️ دوز", callback_data="rsgame_dooz_public")],
+        [InlineKeyboardButton("🤫 اعتراف (پیشفرض)", callback_data="rsgame_eteraf_default"), InlineKeyboardButton("✍️ اعتراف (سفارشی)", callback_data="rsgame_eteraf_custom")],
+        [InlineKeyboardButton("🍄 قارچ", callback_data="rsgame_gharch")],
+        [InlineKeyboardButton("👤 پشتیبانی", url=f"https://t.me/{SUPPORT_USERNAME}"), InlineKeyboardButton("❌ بستن پنل", callback_data="rsgame_close")]
+    ]
+    
+    text = f"**{user.first_name} عزیز، لیست بازی‌های گروه:**"
+    
+    if is_callback:
+        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+    else:
+        await context.bot.send_message(chat.id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
+
+
+async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت دکمه‌های پنل /rsgame."""
+    query = update.callback_query
+    user = query.from_user
+    chat = query.message.chat
+    data = query.data.split('_')
+    action = data[1]
+    
+    await query.answer()
+
+    if action == "check":
+        if str(user.id) != data[3]:
+            return await query.answer("این دکمه برای شما نیست.", show_alert=True)
+        await show_rsgame_panel(update, context, is_callback=True, check_ok=False)
+        return
+        
+    elif action == "close":
+        await query.message.delete()
+        return
+
+    # --- چک دسترسی و عضویت ---
+    is_admin = await is_group_admin(user.id, chat.id, context)
+    
+    # برای بازی‌هایی که نیاز به چک عضویت ندارند (حدس کلمه/عدد/تایپ)، نیازی به این چک نیست.
+    # اما برای حکم، دوز، قارچ و اعتراف، باید عضویت چک شود.
+    if action in ["start", "dooz_public", "eteraf_default", "eteraf_custom", "gharch"]:
+        if not await is_owner(user.id):
+            try:
+                member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
+                    return await query.answer("❌ برای شروع این بازی باید عضو کانال باشی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
+            except:
+                pass
+    
+    # --- ساخت Message ساختگی برای توابع CommandHandler ---
+    # این کار برای اطمینان از اجرای صحیح توابعی که ورودی message را می‌خوانند، لازم است.
+    temp_message = query.message
+    temp_message.from_user = user
+    temp_message.text = f"/{action}" 
+    context.args = []
+
+    # --- منطق شروع بازی‌ها ---
+
+    # 1. حکم (مستقیم به انتظار)
+    if action == "start" and data[2] == "hokm":
+        mode = data[3]
+        max_players = 4 if mode == '4p' else 2
+        
+        text = (
+            f" بازی حکم **{max_players} نفره** توسط {user.mention_html()} شروع شد.\n\n"
+            f"برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید و سپس روی دکمه زیر کلیک کنید."
+        )
+        game_id = query.message.message_id
+        if chat.id not in active_games['hokm']: active_games['hokm'][chat.id] = {}
+        active_games['hokm'][chat.id][game_id] = {"status": "joining", "mode": mode, "players": [], "message_id": game_id}
+        keyboard = [[InlineKeyboardButton(f"پیوستن به بازی (0/{max_players})", callback_data=f"hokm_join_{game_id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        
+    # 2. حدس عدد (مستقیم به دریافت بازه)
+    elif action == "hads_addad":
+        if not is_admin: 
+            return await query.edit_message_text(f"❌ {user.mention_html()} عزیز، بازی حدس عدد فقط توسط ادمین قابل شروع است.", parse_mode=ParseMode.HTML)
+            
+        context.chat_data['rsgame_waiting_for_input'] = {
+            'type': WAITING_FOR_CUSTOM_RANGE,
+            'user_id': user.id,
+            'message_id': query.message.message_id
+        }
+        await query.edit_message_text(
+            f"{user.mention_html()} عزیز، لطفاً بازه بازی را مشخص کنید.\n(مثال: `1-1000`)",
+            parse_mode=ParseMode.HTML
+        )
+    
+    # 3. حدس کلمه (مستقیم به شروع بازی - حذف پنل)
+    elif action == "hads_kalame":
+        if chat.id in active_games['hangman']:
+            return await query.edit_message_text("یک بازی حدس کلمه فعال است.")
+        
+        await query.message.delete()
+        await hads_kalame_command(temp_message, context)
+        
+    # 4. تایپ سرعتی (مستقیم به شروع بازی - حذف پنل)
+    elif action == "type_speed":
+        if chat.id in active_games['typing']:
+            return await query.edit_message_text("یک بازی تایپ سرعتی فعال است.")
+            
+        await query.message.delete()
+        await type_command(temp_message, context)
+
+    # 5. دوز (مستقیم به انتظار بازیکن عمومی)
+    elif action == "dooz_public":
+        chat_id = chat.id
+        if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
+        if any(g.get("status") == "joining_public" for g in active_games['dooz'][chat_id].values()):
+             return await query.edit_message_text("یک بازی دوز عمومی در حال انتظار است.")
+
+        text = (
+            f"⭕️ **بازی دوز عمومی** توسط {user.mention_html()} آغاز شد.\n\n"
+            "برای پیوستن به عنوان بازیکن دوم (❌)، روی دکمه زیر کلیک کنید."
+        )
+        
+        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+        game_id = query.message.message_id
+        
+        active_games['dooz'][chat_id][game_id] = {
+            "status": "joining_public", 
+            "p1_id": user.id,
+            "p1_name": user.first_name,
+            "message_id": game_id
+        }
+        
+        keyboard = [[InlineKeyboardButton("⚔️ پیوستن به بازی (❌)", callback_data=f"dooz_join_public_{game_id}")]]
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    # 6. اعتراف پیشفرض (حذف پنل و شروع)
+    elif action == "eteraf_default":
+        if not is_admin: 
+            return await query.edit_message_text(f"❌ {user.mention_html()} عزیز، بازی اعتراف فقط توسط ادمین قابل شروع است.", parse_mode=ParseMode.HTML)
+            
+        await query.message.delete()
+        temp_message.text = "/eteraf"
+        context.args = []
+        await eteraf_command(temp_message, context)
+
+    # 7. اعتراف سفارشی (دریافت متن)
+    elif action == "eteraf_custom":
+        if not is_admin: 
+            return await query.edit_message_text(f"❌ {user.mention_html()} عزیز، بازی اعتراف فقط توسط ادمین قابل شروع است.", parse_mode=ParseMode.HTML)
+            
+        context.chat_data['rsgame_waiting_for_input'] = {
+            'type': RS_PANEL_WAITING_FOR_ETERAF_TEXT,
+            'user_id': user.id,
+            'message_id': query.message.message_id
+        }
+        await query.edit_message_text(
+            f"{user.mention_html()} عزیز، لطفاً متن دلخواه خود را برای شروع بازی اعتراف ارسال کنید.",
+            parse_mode=ParseMode.HTML
+        )
+
+    # 8. قارچ (دریافت گاد)
+    elif action == "gharch":
+        if not is_admin: 
+            return await query.edit_message_text(f"❌ {user.mention_html()} عزیز، بازی قارچ فقط توسط ادمین قابل شروع است.", parse_mode=ParseMode.HTML)
+            
+        context.chat_data['rsgame_waiting_for_input'] = {
+            'type': RS_PANEL_WAITING_FOR_GHARCH_GOD,
+            'user_id': user.id,
+            'message_id': query.message.message_id
+        }
+        await query.edit_message_text(
+            f"{user.mention_html()} عزیز، لطفاً گاد بازی را مشخص کنید.\n"
+            f"(می‌توانید یوزرنیم، آیدی عددی یا پیام کاربر مورد نظر را منشن/ریپلای کنید)",
+            parse_mode=ParseMode.HTML
+        )
 
 async def rhino_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """مدیریت تمام دکمه‌های پنل بازی."""
