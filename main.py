@@ -228,6 +228,28 @@ async def check_ban_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     return is_banned
 
+async def check_join_for_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    این تابع فقط برای **پیوستن** به بازی‌های کارتی استفاده می‌شود و در صورت عدم عضویت، الرت می‌دهد.
+    """
+    user = update.effective_user
+    if not user or await is_owner(user.id):
+        return True
+
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+    except Exception as e:
+        logger.warning(f"Could not check channel membership for alert: {user.id}: {e}")
+
+    if update.callback_query:
+        await update.callback_query.answer(
+            "برای پیوستن به بازی باید در کانال عضو شوید!",
+            show_alert=True
+        )
+    return False
+
 async def check_forced_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     عضویت کاربر در کانال را چک می‌کند. اگر عضو نباشد، پیام عضویت ارسال کرده و False برمی‌گرداند.
@@ -262,72 +284,112 @@ async def check_forced_join(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
     return False
 
-# --- ##### تغییر کلیدی: پنل اصلی بازی‌ها ##### ---
 async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دستور اصلی برای نمایش پنل بازی‌ها."""
-    # چک کردن وضعیت بن بودن
+    """دستور اصلی برای نمایش پنل بازی‌ها با بررسی اولیه عضویت."""
     if await check_ban_status(update, context):
         return
-
-    text = "🎮 به پنل مدیریت بازی خوش آمدید.\n\nلطفا دسته بندی مورد نظر خود را انتخاب کنید:"
-    keyboard = [
-        [InlineKeyboardButton("🏆 بازی‌های کارتی و گروهی", callback_data="rsgame_cat_board")],
-        [InlineKeyboardButton("✍️ بازی‌های تایپی و سرعتی", callback_data="rsgame_cat_typing")],
-        [InlineKeyboardButton("🤫 بازی‌های ناشناس", callback_data="rsgame_cat_anon")],
-        [InlineKeyboardButton("✖️ بستن پنل", callback_data="rsgame_close")]
-    ]
     
-    if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    elif update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    user = update.effective_user
+    is_member = False
+    if await is_owner(user.id):
+        is_member = True
+    else:
+        try:
+            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+            if member.status in ['member', 'administrator', 'creator']:
+                is_member = True
+        except Exception:
+            is_member = False 
+
+    # اگر کاربر عضو بود، پنل اصلی را نشان بده
+    if is_member:
+        text = "🎮 به پنل بازی خوش آمدید.\n\nلطفا دسته بندی مورد نظر خود را انتخاب کنید:"
+        keyboard = [
+            [InlineKeyboardButton("🏆 بازی‌های کارتی و گروهی", callback_data="rsgame_cat_board")],
+            [InlineKeyboardButton("✍️ بازی‌های تایپی و سرعتی", callback_data="rsgame_cat_typing")],
+            [InlineKeyboardButton("🤫 بازی‌های ناشناس (ویژه ادمین)", callback_data="rsgame_cat_anon")],
+            [InlineKeyboardButton("✖️ بستن پنل", callback_data="rsgame_close")]
+        ]
+        if update.message:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        elif update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    # اگر کاربر عضو نبود، پنل عضویت را نشان بده
+    else:
+        text = "❗️برای استفاده از بازی‌ها، لطفا ابتدا در کانال ما عضو شوید و سپس دکمه «عضو شدم» را بزنید."
+        keyboard = [
+            [InlineKeyboardButton("عضویت در کانال", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")],
+            [InlineKeyboardButton("✅ عضو شدم", callback_data="rsgame_check_join")]
+        ]
+        if update.message:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        elif update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def rsgame_check_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """بررسی مجدد عضویت پس از کلیک روی دکمه 'عضو شدم'."""
+    query = update.callback_query
+    user = query.from_user
+    
+    try:
+        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+        if member.status in ['member', 'administrator', 'creator']:
+            await query.answer("عضویت شما تایید شد!")
+            # حالا که عضویت تایید شد، پنل اصلی را به او نشان می‌دهیم
+            await rsgame_command(update, context)
+        else:
+            await query.answer("شما هنوز در کانال عضو نشده‌اید!", show_alert=True)
+    except Exception:
+        await query.answer("خطایی در بررسی عضویت رخ داد. لطفاً لحظاتی دیگر دوباره تلاش کنید.", show_alert=True)
 
 async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """مدیریت دکمه‌های پنل اصلی بازی‌ها."""
     query = update.callback_query
     await query.answer()
     
-    # چک کردن وضعیت بن بودن
     if await check_ban_status(update, context):
-        try:
-            await query.edit_message_text("شما اجازه استفاده از ربات را ندارید.")
-        except:
-            pass
         return
 
     command = query.data.split('_')
-    category = command[2]
-
-    if category == "main":
+    action_type = command[1]
+    
+    # برای دکمه بازگشت به منوی اصلی
+    if len(command) > 2 and command[2] == "main":
         await rsgame_command(update, context)
         return
         
-    if category == "close":
+    if action_type == "close":
         await query.edit_message_text("پنل بسته شد.")
         return
 
+    category = command[2]
     text = "لطفا بازی مورد نظر خود را انتخاب کنید:"
     keyboard = []
     
     if category == "board":
-        text = " دسته بندی بازی‌های کارتی و گروهی:"
+        text = "🏆 دسته بندی بازی‌های کارتی و گروهی:\n(عضویت اجباری برای پیوستن به بازی الزامی است)"
         keyboard = [
             [InlineKeyboardButton(" حکم ۲ نفره ", callback_data="hokm_start_2p"), InlineKeyboardButton(" حکم ۴ نفره ", callback_data="hokm_start_4p")],
             [InlineKeyboardButton(" دوز (دو نفره) ", callback_data="dooz_start_2p")],
             [InlineKeyboardButton(" بازگشت ", callback_data="rsgame_cat_main")]
         ]
     elif category == "typing":
-        text = " دسته بندی بازی‌های تایپی و سرعتی:"
+        text = "✍️ دسته بندی بازی‌های تایپی و سرعتی (برای همه آزاد است):"
         keyboard = [
             [InlineKeyboardButton(" حدس کلمه ", callback_data="hads_kalame_start")],
             [InlineKeyboardButton(" تایپ سرعتی ", callback_data="type_start")],
-            [InlineKeyboardButton(" حدس عدد ", callback_data="hads_addad_start")],
+            [InlineKeyboardButton(" حدس عدد (ویژه ادمین)", callback_data="hads_addad_start")],
             [InlineKeyboardButton(" بازگشت ", callback_data="rsgame_cat_main")]
         ]
     elif category == "anon":
-        text = " دسته بندی بازی‌های ناشناس:"
+        # چک کردن ادمین بودن برای دسترسی به بخش ناشناس
+        if not await is_group_admin(query.from_user.id, query.message.chat.id, context):
+            await query.answer("این بخش فقط برای مدیران گروه در دسترس است.", show_alert=True)
+            return
+            
+        text = "🤫 دسته بندی بازی‌های ناشناس (ویژه ادمین):"
         keyboard = [
             [InlineKeyboardButton(" اعتراف (پیش‌فرض) ", callback_data="eteraf_start_default")],
             [InlineKeyboardButton(" اعتراف (سفارشی) ", callback_data="eteraf_start_custom")],
@@ -459,9 +521,6 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "start":
         await query.answer()
-        # ##### تغییر کلیدی: چک کردن عضویت اجباری برای سازنده #####
-        if not await check_forced_join(update, context):
-            return
 
         mode = data[2]; max_players = 4 if mode == '4p' else 2
         if chat_id in active_games['hokm'] and any(g['status'] != 'finished' for g in active_games['hokm'][chat_id].values()):
@@ -494,8 +553,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game = active_games['hokm'][chat_id][game_id]
 
     if action == "join":
-        # ##### تغییر کلیدی: چک کردن عضویت اجباری برای بازیکنان دیگر #####
-        if not await check_forced_join(update, context):
+        if not await check_join_for_alert(update, context):
             return
 
         if any(p['id'] == user.id for p in game['players']): 
@@ -644,17 +702,17 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --------------------------- GAME: GUESS THE NUMBER (ConversationHandler - بدون تغییر) ---------------------------
 async def hads_addad_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """شروع بازی از طریق پنل"""
     query = update.callback_query
     await query.answer()
     
     if await check_ban_status(update, context): return ConversationHandler.END
     
-    chat, user = update.effective_chat, update.effective_user
-    if not await is_group_admin(user.id, chat.id, context):
-        await query.answer("❌ این بازی فقط توسط ادمین‌های گروه قابل شروع است.", show_alert=True)
+    # الرت برای کاربر عادی
+    if not await is_group_admin(query.from_user.id, query.message.chat.id, context):
+        await query.answer("❌ این بازی فقط توسط مدیران گروه قابل اجراست.", show_alert=True)
         return ConversationHandler.END
-    if chat.id in active_games['guess_number']:
+        
+    if query.message.chat.id in active_games['guess_number']:
         await query.answer("یک بازی حدس عدد در این گروه فعال است.", show_alert=True)
         return ConversationHandler.END
         
@@ -709,8 +767,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- شروع بازی ---
     if action == "start":
         await query.answer()
-        # چک کردن عضویت اجباری برای سازنده
-        if not await check_forced_join(update, context): return
         
         if chat_id in active_games['dooz'] and any(g['status'] != 'finished' for g in active_games['dooz'][chat_id].values()):
             await query.answer("یک بازی دوز فعال در این گروه وجود دارد.", show_alert=True)
@@ -742,8 +798,8 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game = active_games['dooz'][chat_id][game_id]
 
     if action == "join":
-        # چک کردن عضویت اجباری برای بازیکن دوم
-        if not await check_forced_join(update, context): return
+        if not await check_join_for_alert(update, context): 
+            return
 
         if any(p['id'] == user.id for p in game['players_info']):
             return await query.answer("شما قبلاً به بازی پیوسته‌اید!", show_alert=True)
@@ -1499,6 +1555,7 @@ def main() -> None:
     application.add_handler(CommandHandler("ban_group", ban_group_command, filters=filters.User(OWNER_IDS)))
     application.add_handler(CommandHandler("unban_group", unban_group_command, filters=filters.User(OWNER_IDS)))
 
+    application.add_handler(CallbackQueryHandler(rsgame_check_join_callback, pattern=r'^rsgame_check_join$'))
     # --- CallbackQuery Handlers ---
     # پنل اصلی
     application.add_handler(CallbackQueryHandler(rsgame_callback_handler, pattern=r'^rsgame_cat_'))
