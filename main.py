@@ -1610,8 +1610,8 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(type_start_callback, pattern='^type_start$'))
     application.add_handler(CallbackQueryHandler(eteraf_start_callback, pattern='^eteraf_start_default$'))
     # مدیریت داخلی بازی‌ها
-    application.add_handler(CallbackQueryHandler(callback, pattern=r'^hokm_'))
-    application.add_handler(CallbackQueryHandler(callback, pattern=r'^dooz_'))
+    application.add_handler(CallbackQueryHandler(hokm_callback, pattern=r'^hokm_'))
+    application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
     
     # --- Message Handlers (باید اولویت کمتری داشته باشند) ---
     application.add_handler(MessageHandler(filters.Regex(r'^[آ-ی]$') & filters.ChatType.GROUPS, handle_letter_guess))
