@@ -404,6 +404,19 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 # ... (کد بازی حکم در اینجا قرار می‌گیرد - بدون تغییر)
 import asyncio
 
+async def rsgame_close_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پنل بازی را می‌بندد."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.edit_message_text("پنل بسته شد.")
+    except Exception:
+        # اگر پیام خیلی قدیمی باشد یا مشکلی در ویرایش پیش بیاید، آن را حذف می‌کنیم
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
+
 def create_deck():
     """یک دسته کارت مرتب شده ۵۲تایی ایجاد و آن را بُر می‌زند."""
     suits = ['S', 'H', 'D', 'C']  # Spades, Hearts, Diamonds, Clubs
@@ -521,26 +534,34 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "start":
         await query.answer()
+        mode = data[2]
+        max_players = 4 if mode == '4p' else 2
 
-        mode = data[2]; max_players = 4 if mode == '4p' else 2
-        if chat_id in active_games['hokm'] and any(g['status'] != 'finished' for g in active_games['hokm'][chat_id].values()):
-            await query.answer("یک بازی حکم فعال در این گروه وجود دارد.", show_alert=True)
-            return
-
-        if chat_id not in active_games['hokm']: active_games['hokm'][chat_id] = {}
+        if chat_id not in active_games['hokm']:
+            active_games['hokm'][chat_id] = {}
         
-        # استفاده از پیام اصلی پنل برای ویرایش
-        msg_to_edit = query.message
+        # یک پیام جدید برای این بازی خاص ایجاد می‌کند
+        sent_message = await query.message.reply_text(
+            f"در حال ساخت بازی حکم {max_players} نفره..."
+        )
+        
+        # از آیدی پیام جدید به عنوان شناسه منحصر به فرد بازی استفاده می‌کنیم
+        game_id = sent_message.message_id 
         
         game = {
-            "status": "joining", "mode": mode, 
+            "status": "joining", 
+            "mode": mode, 
             "players": [{'id': user.id, 'name': user.first_name}], 
-            "message_id": msg_to_edit.message_id
+            "message_id": game_id 
         }
-        active_games['hokm'][chat_id][msg_to_edit.message_id] = game
+        active_games['hokm'][chat_id][game_id] = game
         
-        keyboard = [[InlineKeyboardButton(f"پیوستن به بازی (1/{max_players})", callback_data=f"hokm_join_{msg_to_edit.message_id}")]]
-        await msg_to_edit.edit_text(f"بازی حکم {max_players} نفره! منتظر ورود بازیکنان...", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard = [[InlineKeyboardButton(f"پیوستن به بازی (1/{max_players})", callback_data=f"hokm_join_{game_id}")]]
+        await sent_message.edit_text(
+            f"بازی حکم {max_players} نفره توسط {user.mention_html()} ساخته شد! منتظر بازیکنان...", 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
         return
 
     game_id = int(data[2])
@@ -586,8 +607,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             game.update({"hakem_id": hakem_p['id'], "hakem_name": hakem_p['name'], "status": 'hakem_choosing'})
             
             reply_markup = await render_hokm_board(game, context)
-            await query.edit_message_text(f"بازیکنان کامل شدند!\nحاکم: **{game['hakem_name']}**\n\nحاکم عزیز، بر اساس ۵ کارت اول خود، حکم را انتخاب کنید.", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-    
+            await query.edit_message_text(f"بازیکنان کامل شدند!\nحاکم: **{game['hakem_name']}**\n\nحاکم عزیز، بر اساس ۵ کارت اول خود، حکم را انتخاب کنید.", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)    
     # ... (بقیه منطق بازی حکم بدون تغییر باقی می‌ماند)
     elif action == "choose":
         if user.id != game.get('hakem_id'): return await query.answer("شما حاکم نیستید!", show_alert=True)
@@ -764,17 +784,20 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data.split('_'); action = data[1]
 
-    # --- شروع بازی ---
     if action == "start":
         await query.answer()
         
-        if chat_id in active_games['dooz'] and any(g['status'] != 'finished' for g in active_games['dooz'][chat_id].values()):
-            await query.answer("یک بازی دوز فعال در این گروه وجود دارد.", show_alert=True)
-            return
+        if chat_id not in active_games['dooz']:
+            active_games['dooz'][chat_id] = {}
 
-        if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
+        # یک پیام جدید برای این بازی خاص ایجاد می‌کند
+        sent_message = await query.message.reply_text(
+            f"در حال ساخت بازی دوز..."
+        )
+
+        # از آیدی پیام جدید به عنوان شناسه منحصر به فرد بازی استفاده می‌کنیم
+        game_id = sent_message.message_id
         
-        game_id = query.message.message_id
         game = {
             "status": "joining",
             "players_info": [{'id': user.id, 'name': user.first_name, 'symbol': '❌'}],
@@ -784,10 +807,13 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active_games['dooz'][chat_id][game_id] = game
         
         keyboard = [[InlineKeyboardButton("پیوستن به بازی (1/2)", callback_data=f"dooz_join_{game_id}")]]
-        await query.edit_message_text(f"بازی دوز توسط {user.mention_html()} ساخته شد! منتظر حریف...", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+        await sent_message.edit_text(
+            f"بازی دوز توسط {user.mention_html()} ساخته شد! منتظر حریف...", 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
         return
 
-    # --- پیوستن به بازی ---
     game_id = int(data[2])
     if chat_id not in active_games['dooz'] or game_id not in active_games['dooz'][chat_id]:
         await query.answer("این بازی دیگر فعال نیست.", show_alert=True)
@@ -798,8 +824,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     game = active_games['dooz'][chat_id][game_id]
 
     if action == "join":
-        if not await check_join_for_alert(update, context): 
-            return
+        if not await check_join_for_alert(update, context): return
 
         if any(p['id'] == user.id for p in game['players_info']):
             return await query.answer("شما قبلاً به بازی پیوسته‌اید!", show_alert=True)
@@ -810,7 +835,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         game['players_info'].append({'id': user.id, 'name': user.first_name, 'symbol': '⭕️'})
         game['status'] = 'playing'
-        game['turn'] = game['players_info'][0]['id'] # نوبت با سازنده است
+        game['turn'] = game['players_info'][0]['id']
 
         p1 = game['players_info'][0]
         p2 = game['players_info'][1]
@@ -823,7 +848,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
 
-    # --- حرکت در بازی ---
     elif action == "move":
         if user.id not in [p['id'] for p in game['players_info']]:
             return await query.answer("شما بازیکن این مسابقه نیستید!", show_alert=True)
@@ -1556,7 +1580,8 @@ def main() -> None:
     application.add_handler(CommandHandler("unban_group", unban_group_command, filters=filters.User(OWNER_IDS)))
 
     application.add_handler(CallbackQueryHandler(rsgame_check_join_callback, pattern=r'^rsgame_check_join$'))
-    # --- CallbackQuery Handlers ---
+
+    application.add_handler(CallbackQueryHandler(rsgame_close_callback, pattern=r'^rsgame_close$'))
     # پنل اصلی
     application.add_handler(CallbackQueryHandler(rsgame_callback_handler, pattern=r'^rsgame_cat_'))
     application.add_handler(CallbackQueryHandler(rsgame_pv_callback, pattern=r'^rsgame_cat_main_pv$'))
