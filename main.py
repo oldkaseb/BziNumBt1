@@ -594,8 +594,8 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         num_players = len(game['players'])
 
         if num_players < max_players:
-            keyboard = [[InlineKeyboardButton(f"پیوستن به بازی ({num_players}/{max_players})\n @RHINOSOUL_TM برای پیوستن به بازی عضو کانال شوید", callback_data=f"hokm_join_{game_id}")]]
-            await query.edit_message_text(f"بازی حکم (ID: {game_id})\nبازیکنان وارد شده: {num_players}/{max_players}", reply_markup=InlineKeyboardMarkup(keyboard))
+            keyboard = [[InlineKeyboardButton(f"پیوستن به بازی ({num_players}/{max_players})", callback_data=f"hokm_join_{game_id}")]]
+            await query.edit_message_text(f"بازی حکم (ID: {game_id})\nبازیکنان وارد شده: {num_players}/{max_players}\n @RHINOSOUL_TM برای پیوستن به بازی عضو کانال شوید", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             p_ids = [p['id'] for p in game['players']]
             game.update({
