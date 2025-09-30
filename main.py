@@ -4,6 +4,7 @@ import os
 import logging
 import random
 import io
+import asyncio
 from datetime import datetime
 from telegram import (
     Update,
@@ -11,6 +12,7 @@ from telegram import (
     InlineKeyboardMarkup,
     ChatMember,
     ChatMemberUpdated,
+    MessageEntity,
 )
 from telegram.ext import (
     Application,
@@ -29,12 +31,11 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 
 # --- پیکربندی اصلی ---
-OWNER_IDS = [7662192190, 6041119040]
-SUPPORT_USERNAME = "OLDKASEB"
-FORCED_JOIN_CHANNEL = "@RHINOSOUL_TM"
+OWNER_IDS = [7662192190, 6041119040] # آیدی‌های عددی مالک ربات
+SUPPORT_USERNAME = "OLDKASEB" # یوزرنیم پشتیبانی بدون @
+FORCED_JOIN_CHANNEL = "@RHINOSOUL_TM" # کانال عضویت اجباری با @
 GROUP_INSTALL_LIMIT = 50
 INITIAL_LIVES = 6
-# --- تعریف حالت‌های مکالعه برای بازی قارچ ---
 # --- تعریف حالت‌های مکالمه ---
 # برای بازی قارچ
 ASKING_GOD_USERNAME, CONFIRMING_GOD = range(2)
@@ -45,7 +46,7 @@ WAITING_FOR_CUSTOM_RANGE, WAITING_FOR_CUSTOM_ETERAF, WAITING_FOR_GHARCH_GOD = ra
 # برای پنل RSGAME (حالت‌های دریافت ورودی از ادمین)
 RS_PANEL_WAITING_FOR_ETERAF_TEXT, RS_PANEL_WAITING_FOR_GHARCH_GOD = range(6, 8)
 
-# --- لیست کلمات و جملات ---
+# --- لیست کلمات و جملات (بدون تغییر) ---
 WORD_LIST = [
     "فضاپیما", "کهکشان", "الگوریتم", "کتابخانه", "دانشگاه", "کامپیوتر", "اینترنت", "برنامه", "نویسی", "هوش", "مصنوعی", "یادگیری", "ماشین", "شبکه", "عصبی", "داده", "کاوی", "پایتون", "جاوا", "اسکریپت", 
     "فناوری", "اطلاعات", "امنیت", "سایبری", "حمله", "ویروس", "بدافزار", "آنتی", "ویروس", "دیوار", "آتش", "رمزنگاری", "پروتکل", "دامنه", "میزبانی", "وب", "سرور", "کلاینت", "پایگاه", "داده", 
@@ -156,6 +157,7 @@ TYPING_SENTENCES = [
     "کوه دماوند بلندترین قله آتشفشانی در خاورمیانه است", "آرش کمانگیر مرز ایران و توران را با پرتاب یک تیر مشخص کرد", 
     "خلیج فارس یکی از مهمترین آبراه های استراتژیک جهان به شمار میرود", "راز تغییر کردن در این است که تمام انرژی خود را روی ساختن عادت های جدید بگذاری"
 ]
+
 # --- تنظیمات لاگ ---
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -187,8 +189,11 @@ def setup_database():
 async def is_owner(user_id: int) -> bool: return user_id in OWNER_IDS
 async def is_group_admin(user_id: int, chat_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if await is_owner(user_id): return True
-    admins = await context.bot.get_chat_administrators(chat_id)
-    return user_id in {admin.user.id for admin in admins}
+    try:
+        admins = await context.bot.get_chat_administrators(chat_id)
+        return user_id in {admin.user.id for admin in admins}
+    except Exception:
+        return False
 def convert_persian_to_english_numbers(text: str) -> str:
     if not text: return ""
     return text.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
@@ -238,60 +243,324 @@ async def force_join_middleware(update: Update, context: ContextTypes.DEFAULT_TY
         await target_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return False
 
-# --------------------------- GAME: HOKM (نسخه نهایی) ---------------------------
-# ======================= GAME: HOKM (نسخه نهایی با دکمه‌های شیشه‌ای) =======================
+# --------------------------- RHINO GAME PANEL ---------------------------
+async def show_game_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور اصلی برای نمایش پنل بازی‌ها به ادمین."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if chat.type == 'private':
+        return await update.message.reply_text("این دستور فقط در گروه‌ها کار می‌کند.")
 
-# --- توابع کمکی برای بازی حکم ---
-import random
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+    if not await is_group_admin(user.id, chat.id, context):
+        return await update.message.reply_text("❌ این دستور مخصوص ادمین‌های گروه است.")
+    
+    keyboard = [
+        [InlineKeyboardButton("🎮 نمایش لیست بازی‌ها", callback_data="rhino_panel_show_games")],
+        [InlineKeyboardButton("👤 پشتیبانی", url=f"https.t.me/{SUPPORT_USERNAME}")]
+    ]
+    await update.message.reply_text("به پنل مدیریت بازی راینو خوش آمدید.", reply_markup=InlineKeyboardMarkup(keyboard))
 
+
+async def rhino_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت تمام دکمه‌های پنل بازی."""
+    query = update.callback_query
+    user = query.from_user
+    chat = query.message.chat
+    
+    if not await is_group_admin(user.id, chat.id, context):
+        return await query.answer("❌ فقط ادمین‌ها می‌توانند از این پنل استفاده کنند.", show_alert=True)
+
+    await query.answer()
+    data = query.data.split('_')
+    action = data[2]
+
+    # --- منوی اصلی و لیست بازی‌ها ---
+    if action == "show": # rhino_panel_show_games
+        keyboard = [
+            [InlineKeyboardButton("🃏 حکم", callback_data="rhino_panel_hokm"), InlineKeyboardButton("⭕️ دوز", callback_data="rhino_panel_dooz")],
+            [InlineKeyboardButton("🕵️‍♂️ حدس کلمه", callback_data="rhino_panel_hads_kalame"), InlineKeyboardButton("🔢 حدس عدد", callback_data="rhino_panel_hads_addad")],
+            [InlineKeyboardButton("⌨️ تایپ سرعتی", callback_data="rhino_panel_type_speed"), InlineKeyboardButton("🤫 اعتراف", callback_data="rhino_panel_eteraf")],
+            [InlineKeyboardButton("🍄 قارچ", callback_data="rhino_panel_gharch")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="rhino_panel_back_to_main")]
+        ]
+        await query.edit_message_text("یک بازی را برای شروع انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif action == "back": # rhino_panel_back_to_main
+        keyboard = [
+            [InlineKeyboardButton("🎮 نمایش لیست بازی‌ها", callback_data="rhino_panel_show_games")],
+            [InlineKeyboardButton("👤 پشتیبانی", url=f"https://t.me/{SUPPORT_USERNAME}")]
+        ]
+        await query.edit_message_text("به پنل مدیریت بازی راینو خوش آمدید.", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # --- منطق بازی‌ها ---
+    elif action == "hokm":
+        keyboard = [
+            [InlineKeyboardButton("😎 ۲ نفره", callback_data="rhino_panel_hokm_start_2p"), InlineKeyboardButton("👨‍👩‍👧‍👦 ۴ نفره", callback_data="rhino_panel_hokm_start_4p")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="rhino_panel_show_games")]
+        ]
+        await query.edit_message_text("حالت بازی حکم را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif action == "hokm_start":
+        mode = data[3]
+        max_players = 4 if mode == '4p' else 2
+        
+        text = (
+            f" بازی حکم **{max_players} نفره** توسط {user.mention_html()} شروع شد.\n\n"
+            f"برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید و سپس روی دکمه زیر کلیک کنید."
+        )
+
+        if chat.id not in active_games['hokm']: active_games['hokm'][chat.id] = {}
+        game_id = query.message.message_id
+        active_games['hokm'][chat.id][game_id] = {"status": "joining", "mode": mode, "players": [], "message_id": game_id}
+        keyboard = [[InlineKeyboardButton(f"پیوستن به بازی (0/{max_players})", callback_data=f"hokm_join_{game_id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+    elif action == "dooz":
+        text = (
+            f" بازی دوز توسط {user.mention_html()} شروع شد.\n\n"
+            f"نفر دوم برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید و سپس روی دکمه زیر کلیک کنید."
+        )
+        keyboard = [[InlineKeyboardButton("⚔️ پیوستن به بازی", callback_data=f"rhino_panel_dooz_join_{user.id}")]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+
+    elif action == "dooz_join": # این منطق قدیمی است و فقط برای پنل اولیه استفاده می‌شود
+        challenger_id = int(data[3])
+        if user.id == challenger_id:
+            return await query.answer("شما نمی‌توانید به بازی خودتان بپیوندید!", show_alert=True)
+        if not await force_join_middleware(update, context): return
+
+        challenger = await context.bot.get_chat(challenger_id)
+        
+        chat_id = query.message.chat.id
+        game_id = query.message.message_id
+        if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
+
+        active_games['dooz'][chat_id][game_id] = {
+            "players": {challenger_id: "❌", user.id: "⭕️"},
+            "board": [[" "]*3 for _ in range(3)],
+            "turn": challenger_id
+        }
+        text = f"بازی شروع شد!\n{challenger.mention_html()} (❌) vs {user.mention_html()} (⭕️)\n\nنوبت {challenger.mention_html()} است."
+        keyboard = [[InlineKeyboardButton(" ", callback_data=f"dooz_move_{game_id}_{r*3+c}_{challenger_id}_{user.id}") for c in range(3)] for r in range(3)]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
+    
+    elif action == "hads_kalame":
+        await query.message.delete()
+        await hads_kalame_command(query.message, context) 
+    
+    elif action == "type_speed":
+        await query.message.delete()
+        await type_command(query.message, context) 
+    
+    elif action == "hads_addad":
+        keyboard = [
+            [InlineKeyboardButton("😊 آسان (۱-۱۰۰)", callback_data="rhino_panel_hads_addad_start_1_100")],
+            [InlineKeyboardButton("😎 متوسط (۱-۱۰۰۰)", callback_data="rhino_panel_hads_addad_start_1_1000")],
+            [InlineKeyboardButton("🥵 سخت (۱-۹۹۹۹)", callback_data="rhino_panel_hads_addad_start_1_9999")],
+            [InlineKeyboardButton("⚙️ سفارشی", callback_data="rhino_panel_hads_addad_custom")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="rhino_panel_show_games")]
+        ]
+        await query.edit_message_text("سطح بازی حدس عدد را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    elif action == "hads_addad_start":
+        min_range, max_range = int(data[3]), int(data[4])
+        if chat.id in active_games['guess_number']:
+            return await query.edit_message_text("یک بازی حدس عدد در این گروه فعال است.")
+        
+        secret_number = random.randint(min_range, max_range)
+        active_games['guess_number'][chat.id] = {"number": secret_number, "min": min_range, "max": max_range}
+        await query.edit_message_text(
+            f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **{min_range}** و **{max_range}** انتخاب شده.\n\n"
+            "بازیکنان می‌توانند با ارسال عدد در گروه، شانس خود را امتحان کنند.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+    elif action == "hads_addad_custom":
+        context.chat_data['waiting_for_input'] = {
+            'type': WAITING_FOR_CUSTOM_RANGE,
+            'user_id': user.id,
+            'message_id': query.message.message_id
+        }
+        await query.edit_message_text(
+            f"{user.mention_html()} عزیز، لطفاً بازه بازی را مشخص کنید.\n(مثال: `1-1000`)",
+            parse_mode=ParseMode.HTML
+        )
+
+    elif action == "eteraf":
+        keyboard = [
+            [InlineKeyboardButton("📜 متن پیش‌فرض", callback_data="rhino_panel_eteraf_default")],
+            [InlineKeyboardButton("✍️ متن سفارشی", callback_data="rhino_panel_eteraf_custom")],
+            [InlineKeyboardButton("🔙 بازگشت", callback_data="rhino_panel_show_games")]
+        ]
+        await query.edit_message_text("نوع بازی اعتراف را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif action == "eteraf_default":
+        await query.message.delete()
+        original_message = query.message
+        original_message.text = "/eteraf"
+        context.args = []
+        await eteraf_command(original_message, context)
+        
+    elif action == "eteraf_custom":
+        context.chat_data['waiting_for_input'] = {
+            'type': WAITING_FOR_CUSTOM_ETERAF,
+            'user_id': user.id,
+            'message_id': query.message.message_id
+        }
+        await query.edit_message_text(
+            f"{user.mention_html()} عزیز، لطفاً متن دلخواه خود را برای شروع بازی اعتراف ارسال کنید.",
+            parse_mode=ParseMode.HTML
+        )
+
+    elif action == "gharch":
+        context.chat_data['waiting_for_input'] = {
+            'type': WAITING_FOR_GHARCH_GOD,
+            'user_id': user.id,
+            'message_id': query.message.message_id
+        }
+        await query.edit_message_text(
+            f"{user.mention_html()} عزیز، لطفاً گاد بازی را مشخص کنید.\n"
+            f"(می‌توانید یوزرنیم، آیدی عددی یا پیام کاربر مورد نظر را منشن/ریپلای کنید)",
+            parse_mode=ParseMode.HTML
+        )
+
+async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """پردازش ورودی‌های متنی ادمین برای حالت‌های سفارشی پنل (rhinogame و rsgame)."""
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    # چک می‌کنیم که کدام پنل فعال است
+    input_key = None
+    if 'rsgame_waiting_for_input' in context.chat_data:
+        input_key = 'rsgame_waiting_for_input'
+    elif 'waiting_for_input' in context.chat_data:
+        input_key = 'waiting_for_input'
+
+    if not input_key:
+        return
+
+    waiting_info = context.chat_data[input_key]
+    if waiting_info['user_id'] != user_id:
+        return # ورودی از کاربر دیگری است
+
+    input_type = waiting_info['type']
+    message_id_to_edit = waiting_info['message_id']
+    
+    
+    if input_type == WAITING_FOR_CUSTOM_RANGE or input_type == 3: # حدس عدد پنل rhino_panel یا rsgame
+        del context.chat_data[input_key]
+        try:
+            min_str, max_str = convert_persian_to_english_numbers(update.message.text).split('-')
+            min_range, max_range = int(min_str.strip()), int(max_str.strip())
+            if min_range >= max_range: raise ValueError
+            
+            await update.message.delete()
+            if chat_id in active_games['guess_number']:
+                return await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id_to_edit, text="یک بازی حدس عدد در این گروه فعال است.")
+
+            secret_number = random.randint(min_range, max_range)
+            active_games['guess_number'][chat_id] = {"number": secret_number, "min": min_range, "max": max_range}
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id_to_edit,
+                text=f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **{min_range}** و **{max_range}** انتخاب شده.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+
+        except Exception:
+            await update.message.delete()
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=message_id_to_edit,
+                text="فرمت اشتباه است. بازی لغو شد. لطفاً دوباره از پنل تلاش کنید.",
+            )
+
+    elif input_type == WAITING_FOR_CUSTOM_ETERAF or input_type == 4: # اعتراف سفارشی پنل rhino_panel
+        custom_text = update.message.text
+        del context.chat_data[input_key]
+        await update.message.delete()
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
+        
+        original_message = update.message
+        original_message.text = f"/eteraf {custom_text}"
+        context.args = custom_text.split()
+        await eteraf_command(original_message, context)
+
+    elif input_type == WAITING_FOR_GHARCH_GOD or input_type == 5: # قارچ پنل rhino_panel
+        del context.chat_data[input_key]
+        await update.message.delete()
+        
+        # برای بازی قارچ، پیام اصلی را برای فرآیند مکالمه جدید ارسال می‌کنیم
+        if 'gharch_setup_message_id' in context.chat_data:
+            del context.chat_data['gharch_setup_message_id']
+            
+        # شبیه سازی یک پیام با /gharch برای ورود به مکالمه
+        original_message = update.message
+        original_message.text = "/gharch " + update.message.text
+        context.args = update.message.text.split()
+        context.chat_data['starter_admin_id'] = user_id
+        
+        # برای ادامه مکالمه قارچ، ورودی کاربر را در context.user_data برای تابع receive_god_username ذخیره می‌کنیم
+        context.chat_data['god_username_input'] = update.message.text
+        await receive_god_username_from_panel(update, context)
+        return
+        
+    # --- منطق جدید برای پنل RSGAME ---
+    elif input_type == RS_PANEL_WAITING_FOR_ETERAF_TEXT or input_type == 6: # اعتراف سفارشی پنل rsgame
+        custom_text = update.message.text
+        del context.chat_data[input_key]
+        await update.message.delete()
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
+        
+        original_message = update.message
+        original_message.text = f"/eteraf {custom_text}"
+        context.args = custom_text.split()
+        await eteraf_command(original_message, context)
+        
+    elif input_type == RS_PANEL_WAITING_FOR_GHARCH_GOD or input_type == 7: # قارچ پنل rsgame
+        del context.chat_data[input_key]
+        await update.message.delete()
+        
+        # پیام اصلی پنل را به عنوان پیام مکالمه در نظر می‌گیریم
+        context.chat_data['gharch_setup_message_id'] = message_id_to_edit
+        
+        # برای ادامه مکالمه قارچ، ورودی کاربر را به تابع کمکی ارسال می‌کنیم
+        await receive_god_username_from_panel(update, context)
+        return
+
+# --------------------------- GAME: HOKM ---------------------------
 def create_deck():
-    """یک دسته کارت مرتب شده ۵۲تایی ایجاد و آن را بُر می‌زند."""
-    suits = ['S', 'H', 'D', 'C']  # Spades, Hearts, Diamonds, Clubs
-    ranks = list(range(2, 15))  # 2-10, J(11), Q(12), K(13), A(14)
+    suits = ['S', 'H', 'D', 'C'] 
+    ranks = list(range(2, 15)) 
     deck = [f"{s}{r}" for s in suits for r in ranks]
     random.shuffle(deck)
     return deck
 
 def card_to_persian(card):
-    """کارت را به فرمت فارسی با ایموجی تبدیل می‌کند."""
     if not card: return "🃏"
     suits = {'S': '♠️', 'H': '♥️', 'D': '♦️', 'C': '♣️'}
     ranks = {11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
     suit, rank = card[0], int(card[1:])
-    # نمایش رنک کارت یا حرف معادل آن
     rank_display = str(ranks.get(rank, rank))
     return f"{suits[suit]} {rank_display}"
 
 def get_card_value(card, hokm_suit, trick_suit):
-    """ارزش عددی یک کارت را برای مقایسه و تعیین برنده دست محاسبه می‌کند."""
     suit, rank = card[0], int(card[1:])
     value = rank
     if suit == hokm_suit:
-        value += 200  # کارت‌های حکم بالاترین ارزش را دارند
+        value += 200
     elif suit == trick_suit:
-        value += 100  # کارت‌های خال زمین ارزش بیشتری از سایر خال‌ها دارند
+        value += 100
     return value
 
-# --- تابع اصلی برای ساخت رابط کاربری (صفحه بازی) ---
-# ======================= کد اصلاح شده و نهایی =======================
 async def render_hokm_board(game: dict, context: ContextTypes.DEFAULT_TYPE):
-    """
-    این تابع صفحه بازی (متن و دکمه‌ها) را بر اساس وضعیت فعلی بازی برای همه تولید می‌کند.
-    """
     game_id = game['message_id']
     keyboard = []
     
-    # --- بخش نمایش بازیکنان و کارت‌های روی میز ---
     if game['mode'] == '4p':
         p_names = [p['name'] for p in game['players']]
         p_ids = [p['id'] for p in game['players']]
         team_a_text = f"🔴 تیم 1: {p_names[0]} و {p_names[2]}"
         team_b_text = f"🔵 تیم 2: {p_names[1]} و {p_names[3]}"
         
-        # استفاده از دیکشنری برای نگهداری کارت‌ها تا هر کارت دقیقاً جلوی بازیکن خودش قرار گیرد
         table_cards_map = {pid: "➖" for pid in p_ids}
         for play in game.get('current_trick', []):
             table_cards_map[play['player_id']] = card_to_persian(play['card'])
@@ -355,7 +624,6 @@ async def render_hokm_board(game: dict, context: ContextTypes.DEFAULT_TYPE):
     
     return InlineKeyboardMarkup(keyboard)
 
-# --- تابع مدیریت دستور اولیه بازی (بدون تغییر) ---
 async def hokm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور اولیه برای شروع بازی و انتخاب حالت ۲ یا ۴ نفره."""
     if not await pre_command_check(update, context): return
@@ -371,14 +639,11 @@ async def hokm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("حالت بازی حکم را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# --- تابع اصلی برای مدیریت تمام تعاملات بازی ---
-# ======================= کد اصلاح شده و نهایی =======================
 async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     chat_id = query.message.chat.id
     
-    # چک کلی برای بن کاربر/گروه انجام می‌شود، نه عضویت
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
@@ -388,7 +653,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data.split('_'); action = data[1]
 
-    if action == "start": # این بخش شروع بازی را انجام می‌دهد و دکمه Join را فعال می‌کند. (بدون تغییر)
+    if action == "start":
         await query.answer(); mode = data[2]; max_players = 4 if mode == '4p' else 2
         
         text = (
@@ -412,7 +677,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     game = active_games['hokm'][chat_id][game_id]
 
-    if action == "join": # پیوستن به بازی (با چک عضویت آلرتی)
+    if action == "join":
         if any(p['id'] == user.id for p in game['players']): return await query.answer("شما قبلاً به بازی پیوسته‌اید!", show_alert=True)
         max_players = 4 if game['mode'] == '4p' else 2
         if len(game['players']) >= max_players: return await query.answer("ظرفیت بازی تکمیل است.", show_alert=True)
@@ -424,7 +689,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
                 return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
         except Exception:
-            pass # در صورت خطا، اجازه ورود می‌دهد
+            pass
         # ----------------------------------
 
         await query.answer("به بازی پیوستید!")
@@ -460,7 +725,7 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = await render_hokm_board(game, context)
             await query.edit_message_text(f"بازیکنان کامل شدند!\nحاکم: **{game['hakem_name']}**\n\nحاکم عزیز، بر اساس ۵ کارت اول خود، حکم را انتخاب کنید.", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
-    elif action == "choose": # ... (بدون تغییر)
+    elif action == "choose":
         if user.id != game.get('hakem_id'): return await query.answer("شما حاکم نیستید!", show_alert=True)
         await query.answer(); game['hokm_suit'] = data[3]
         for p in game['players']:
@@ -471,13 +736,13 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = await render_hokm_board(game, context)
         await query.edit_message_text(f"بازی شروع شد! حکم: **{card_to_persian(game['hokm_suit']+'2')[0]}**\n\nنوبت **{turn_player_name}** است.", reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
-    elif action == "showhand": # ... (بدون تغییر)
+    elif action == "showhand":
         if not any(p['id'] == user.id for p in game['players']): return await query.answer("شما بازیکن این مسابقه نیستید!", show_alert=True)
         hand = sorted(game['hands'].get(user.id, []))
         hand_str = "\n".join([f"{i+1}. {card_to_persian(c)}" for i, c in enumerate(hand)]) or "شما کارتی در دست ندارید."
         await query.answer(f"دست شما:\n{hand_str}", show_alert=True)
 
-    elif action == "play": # ... (بدون تغییر)
+    elif action == "play":
         if user.id != game['players'][game['turn_index']]['id']: return await query.answer("نوبت شما نیست!", show_alert=True)
         card_index = int(data[3])
         hand = sorted(game['hands'][user.id]) 
@@ -571,7 +836,6 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
 
 # --------------------------- GAME: GUESS THE NUMBER (ConversationHandler) ---------------------------
-SELECTING_RANGE, GUESSING = range(2)
 async def hads_addad_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     chat, user = update.effective_chat, update.effective_user
     if chat.type == 'private':
@@ -596,24 +860,38 @@ async def receive_range(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except:
         await update.message.reply_text("فرمت اشتباه است. لطفا به این صورت وارد کنید: `عدد کوچک-عدد بزرگ`", parse_mode=ParseMode.MARKDOWN)
         return SELECTING_RANGE
+        
     secret_number = random.randint(min_range, max_range)
     active_games['guess_number'][chat.id] = {"number": secret_number}
     await update.message.reply_text(f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **{min_range}** و **{max_range}** انتخاب شده.", parse_mode=ParseMode.MARKDOWN)
-    return GUESSING
+    
+    # پایان ConversationHandler و انتقال کنترل به MessageHandler عمومی
+    return ConversationHandler.END
 
-async def handle_guess_conversation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+
+async def handle_guess_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت حدس‌ها برای بازی‌های حدس عدد فعال (پیام‌های معمولی)."""
     chat_id = update.effective_chat.id
-    if chat_id not in active_games['guess_number']: return ConversationHandler.END
-    guess = int(convert_persian_to_english_numbers(update.message.text))
-    secret_number = active_games['guess_number'][chat_id]['number']
+    if chat_id not in active_games['guess_number']: return 
+    
+    game_data = active_games['guess_number'][chat_id]
+    
+    try:
+        guess = int(convert_persian_to_english_numbers(update.message.text))
+    except (ValueError, TypeError):
+        return 
+
+    secret_number = game_data['number']
     user = update.effective_user
-    if guess < secret_number: await update.message.reply_text("بالاتر ⬆️")
-    elif guess > secret_number: await update.message.reply_text("پایین‌تر ⬇️")
+    
+    if guess < secret_number:
+        await update.message.reply_text("بالاتر ⬆️")
+    elif guess > secret_number:
+        await update.message.reply_text("پایین‌تر ⬇️")
     else:
         await update.message.reply_text(f"🎉 **تبریک!** {user.mention_html()} برنده شد! 🎉\n\nعدد صحیح **{secret_number}** بود.", parse_mode=ParseMode.HTML)
         del active_games['guess_number'][chat_id]
-        return ConversationHandler.END
-    return GUESSING
+
 
 async def cancel_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.effective_chat.id in active_games['guess_number']: del active_games['guess_number'][update.effective_chat.id]
@@ -630,14 +908,12 @@ async def dooz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     challenger = update.effective_user
     challenged_user = None
 
-    # بررسی ریپلای
     if update.message.reply_to_message:
         challenged_user = update.message.reply_to_message.from_user
         if challenged_user.is_bot or challenged_user.id == challenger.id:
             await update.message.reply_text("❌ دعوت نامعتبر: نمی‌توانید ربات یا خودتان را دعوت کنید.")
             return
 
-    # اگر کاربر مشخص شد (ریپلای یا منشن)، دعوت خصوصی ارسال می‌شود.
     if challenged_user or (context.args and context.args[0].startswith('@')):
         if challenged_user:
             challenged_mention = challenged_user.mention_html()
@@ -653,11 +929,9 @@ async def dooz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]]
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
         
-    # اگر کاربری مشخص نشد، بازی را برای عموم بسازد.
     else:
         chat_id = update.effective_chat.id
         if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
-        # چک فعال بودن بازی عمومی
         if any(g.get("status") == "joining_public" for g in active_games['dooz'][chat_id].values()):
              return await update.message.reply_text("یک بازی دوز عمومی در حال انتظار است.")
 
@@ -682,7 +956,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     
-    # چک کلی برای بن کاربر/گروه انجام می‌شود، نه عضویت
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
@@ -695,7 +968,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split('_')
     action = data[1]
 
-    if action == "join_public": # پیوستن به بازی دوز عمومی
+    if action == "join_public":
         game_id = int(data[2])
         chat_id = query.message.chat.id
         
@@ -720,7 +993,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.answer("به بازی پیوستید! بازی شروع شد.")
         
-        # شروع بازی
         p1_mention = f"[{game['p1_name']}](tg://user?id={p1_id})"
         
         game.update({
@@ -788,7 +1060,6 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text(f"{user.mention_html()} دعوت {p1_mention} را رد کرد.", parse_mode=ParseMode.HTML)
 
-    # ... بقیه کد dooz_callback برای "move" (بدون تغییر)
     elif action == "move":
         chat_id = query.message.chat.id
         game_id = int(data[2])
@@ -848,7 +1119,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(board_rows), parse_mode=ParseMode.HTML)
 
-# --------------------------- GAME: HADS KALAME (با جان جداگانه) ---------------------------
+# --------------------------- GAME: HADS KALAME ---------------------------
 async def hads_kalame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.chat.id
     if chat_id in active_games['hangman']: return await update.reply_text("یک بازی حدس کلمه فعال است.")
@@ -862,7 +1133,8 @@ async def hads_kalame_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_letter_guess(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id, user = update.effective_chat.id, update.effective_user
     if chat_id not in active_games['hangman']: return
-    if not await force_join_middleware(update, context): return
+    # حذف چک عضویت اجباری از این بازی
+    # if not await force_join_middleware(update, context): return 
 
     guess = update.message.text.strip()
     game = active_games['hangman'][chat_id]
@@ -892,12 +1164,6 @@ async def handle_letter_guess(update: Update, context: ContextTypes.DEFAULT_TYPE
                 del active_games['hangman'][chat_id]
 
 # --------------------------- GAME: GHARCH & ETERAF ---------------------------
-# ======================= GAME: GHARCH (نسخه جدید با گاد) =======================
-
-# --- مرحله اول: شروع بازی و درخواست یوزرنیم گاد ---
-# ======================= این دو تابع را به طور کامل جایگزین کنید =======================
-
-# --- مرحله اول: شروع بازی، ارسال پیام اولیه و ذخیره آیدی آن ---
 async def gharch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """شروع فرآیند بازی قارچ و ورود به حالت مکالمه."""
     if not await pre_command_check(update, context): return ConversationHandler.END
@@ -909,10 +1175,8 @@ async def gharch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("❌ فقط ادمین‌های گروه می‌توانند این بازی را شروع کنند.")
         return ConversationHandler.END
     
-    # ذخیره آیدی ادمین شروع کننده
     context.chat_data['starter_admin_id'] = update.effective_user.id
     
-    # <<<--- تغییر اصلی: ارسال پیام و ذخیره آیدی آن --->>>
     sent_message = await update.message.reply_text(
         "🍄 **شروع بازی قارچ**\n\n"
         "لطفاً یوزرنیم گاد بازی را ارسال کنید."
@@ -921,19 +1185,19 @@ async def gharch_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     
     return ASKING_GOD_USERNAME
 
-# --- مرحله دوم: دریافت یوزرنیم، حذف پیام ادمین و ویرایش پیام اصلی ---
 async def receive_god_username(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """دریافت یوزرنیم گاد، حذف پیام و ویرایش پیام اولیه."""
     god_username = update.message.text.strip()
+    
+    # اگر ورودی یک یوزرنیم ساده نبود، می‌توانیم از منطق پیچیده receive_god_username_from_panel استفاده کنیم
     if not god_username.startswith('@'):
+        # برای سادگی، فعلاً فقط یوزرنیم با @ را می‌پذیریم
         await update.message.reply_text("فرمت اشتباه است. لطفاً یوزرنیم را با @ ارسال کنید.", quote=True)
-        return ASKING_GOD_USERNAME
-
+        return ASKING_GOD_USERNAME 
+        
     context.chat_data['god_username'] = god_username
-    starter_admin_id = context.chat_data['starter_admin_id']
     setup_message_id = context.chat_data.get('gharch_setup_message_id')
 
-    # <<<--- تغییر اصلی: حذف پیام حاوی یوزرنیم --->>>
     try:
         await update.message.delete()
     except Exception as e:
@@ -944,10 +1208,9 @@ async def receive_god_username(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
 
     keyboard = [[
-        InlineKeyboardButton("✅ تایید می‌کنم", callback_data=f"gharch_confirm_god_{starter_admin_id}")
+        InlineKeyboardButton("✅ تایید می‌کنم", callback_data=f"gharch_confirm_god_{god_username.lstrip('@')}")
     ]]
     
-    # <<<--- تغییر اصلی: ویرایش پیام اولیه به جای ارسال پیام جدید --->>>
     await context.bot.edit_message_text(
         chat_id=update.effective_chat.id,
         message_id=setup_message_id,
@@ -961,62 +1224,58 @@ async def receive_god_username(update: Update, context: ContextTypes.DEFAULT_TYP
     
     return CONFIRMING_GOD
 
-# --- مرحله سوم: تایید نهایی گاد و شروع بازی ---
-# ======================= فقط این تابع را به طور کامل جایگزین کنید =======================
-# ======================= این تابع را به طور کامل جایگزین کنید =======================
 async def confirm_god(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """گاد بازی را تایید کرده و بازی رسماً شروع می‌شود. (نسخه مقاوم در برابر خطای پین)"""
     query = update.callback_query
     user = query.from_user
     chat_id = query.message.chat.id
     
-    god_username_from_admin = context.chat_data.get('god_username', '').lower().lstrip('@')
+    god_username_from_admin = data = query.data.split('_')[3]
+    
+    # چک می‌کند که کاربر کلیک کننده همان گاد باشد (بر اساس یوزرنیم یا آیدی عددی)
+    is_correct_user = False
+    if god_username_from_admin.isdigit() and user.id == int(god_username_from_admin):
+         is_correct_user = True
+    elif user.username and user.username.lower() == god_username_from_admin.lower():
+         is_correct_user = True
 
-    if not user.username or user.username.lower() != god_username_from_admin:
-        await query.answer("این درخواست برای شما نیست، یا یوزرنیم تلگرام شما تنظیم نشده است.", show_alert=True)
-        return CONFIRMING_GOD
+    if not is_correct_user:
+        await query.answer("این درخواست برای شما نیست.", show_alert=True)
+        return ConversationHandler.END # پایان دادن به مکالمه برای کاربر دیگر
 
     await query.answer("شما به عنوان گاد تایید شدید!")
 
     try:
-        # اطلاعات گاد را ذخیره می‌کنیم
         god_id = user.id
-        god_username_display = f"@{user.username}"
+        god_username_display = f"@{user.username}" if user.username else user.mention_html()
         active_gharch_games[chat_id] = {'god_id': god_id, 'god_username': god_username_display}
 
-        # متن و دکمه جدید برای پیام اصلی بازی را تعریف می‌کنیم
         bot_username = (await context.bot.get_me()).username
         game_message_text = (
-            "**بازی قارچ 🍄 شروع شد!**\n\n"
-            "روی دکمه زیر کلیک کن و حرف دلت رو بنویس تا به صورت ناشناس در گروه ظاهر بشه!\n\n"
+            f"**بازی قارچ 🍄 شروع شد!**\n\n"
+            f"روی دکمه زیر کلیک کن و حرف دلت رو بنویس تا به صورت ناشناس در گروه ظاهر بشه!\n\n"
             f"*(فقط گاد بازی، {god_username_display}، از هویت ارسال‌کننده مطلع خواهد شد.)*"
         )
         keyboard = [[InlineKeyboardButton("🍄 ارسال پیام ناشناس", url=f"https://t.me/{bot_username}?start=gharch_{chat_id}")]]
         
-        # پیام را با موفقیت ویرایش می‌کنیم و بازی رسماً ساخته می‌شود
         await query.edit_message_text(
             text=game_message_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.MARKDOWN
         )
         
-        # <<<--- شروع تغییرات اصلی (جدا کردن منطق پین) --->>>
-        # حالا تلاش می‌کنیم پیام را پین کنیم، اما اگر نشد هم مشکلی نیست
         try:
             await context.bot.pin_chat_message(chat_id, query.message.message_id)
             active_gharch_games[chat_id]['pinned_message_id'] = query.message.message_id
         except Exception as pin_error:
-            # اگر ربات دسترسی پین نداشت، فقط یک لاگ ثبت می‌کند و یک پیام راهنما می‌فرستد
             logger.warning(f"Could not pin message in group {chat_id}. Reason: {pin_error}")
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="✅ بازی با موفقیت شروع شد. ادمین‌های عزیز، لطفاً این پیام را پین کنید.",
                 reply_to_message_id=query.message.message_id
             )
-        # <<<--- پایان تغییرات اصلی --->>>
 
     except Exception as e:
-        # این بخش برای خطاهای بسیار جدی و غیرمنتظره در ساخت بازی است
         error_message = f"🚫 **خطای ناشناخته!**\n\nربات در ساخت بازی با یک خطای غیرمنتظره مواجه شد: `{e}`"
         await context.bot.send_message(chat_id=chat_id, text=error_message, parse_mode=ParseMode.MARKDOWN)
         logger.error(f"CRITICAL ERROR in confirm_god: {e}")
@@ -1024,45 +1283,32 @@ async def confirm_god(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     return ConversationHandler.END
 
-# --- تابع برای لغو کردن فرآیند ---
 async def cancel_gharch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """لغو فرآیند ساخت بازی قارچ."""
     await update.message.reply_text("فرآیند ساخت بازی قارچ لغو شد.")
     return ConversationHandler.END
 
 async def eteraf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    دستور شروع اعتراف ناشناس که فقط توسط ادمین‌ها قابل اجراست.
-    حالت اول: /eteraf (با متن پیش‌فرض)
-    حالت دوم: /eteraf متن دلخواه شما (با متن سفارشی)
-    """
-    # مرحله ۱: بررسی اینکه دستور در گروه اجرا شده باشد
     if update.effective_chat.type == 'private':
         await update.message.reply_text("این دستور فقط در گروه‌ها قابل استفاده است.")
         return
 
-    # مرحله ۲: بررسی ادمین بودن کاربر (با استفاده از تابع کمکی موجود در کد شما)
     user = update.effective_user
     chat_id = update.effective_chat.id
     if not await is_group_admin(user.id, chat_id, context):
         await update.message.reply_text("❌ شما اجازه استفاده از این دستور را ندارید. این دستور مخصوص مدیران گروه است.")
         return
 
-    # مرحله ۳: بررسی عضویت اجباری
     if not await force_join_middleware(update, context): 
         return
 
-    # مرحله ۴: تعیین متن پیام (پیش‌فرض یا سفارشی)
     custom_text = " ".join(context.args)
     
     if custom_text:
-        # اگر کاربر متن سفارشی وارد کرده بود
         starter_text = custom_text
     else:
-        # در غیر این صورت، از متن پیش‌فرض استفاده کن
         starter_text = "یک موضوع اعتراف جدید شروع شد. برای ارسال اعتراف ناشناس (که به این پیام ریپلای می‌شود)، از دکمه زیر استفاده کنید."
 
-    # مرحله ۵: ارسال پیام و دکمه
     bot_username = (await context.bot.get_me()).username
     
     try:
@@ -1073,34 +1319,30 @@ async def eteraf_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in eteraf_command: {e}")
         await update.message.reply_text(f"خطایی در ارسال پیام رخ داد: {e}")
 
-# ======================= این تابع را جایگزین کنید =======================
+
 async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     if 'anon_target_chat' not in user_data:
         return await update.message.reply_text("لطفاً ابتدا از طریق دکمه‌ای که در گروه قرار دارد، فرآیند را شروع کنید.")
     
-    # استخراج اطلاعات لازم از user_data
     target_info = user_data['anon_target_chat']
     target_chat_id = target_info['id']
     game_type = target_info['type']
     message_text = update.message.text
 
     try:
-        # --- منطق جدید برای بازی قارچ ---
         if game_type == "gharch":
             if target_chat_id in active_gharch_games:
                 sender = update.effective_user
                 god_info = active_gharch_games[target_chat_id]
                 god_id = god_info['god_id']
 
-                # ۱. ارسال پیام ناشناس به گروه
                 await context.bot.send_message(
                     chat_id=target_chat_id,
                     text=f"#پیام_ناشناس 🍄\n\n{message_text}"
                 )
                 await update.message.reply_text("✅ پیام شما با موفقیت به صورت ناشناس در گروه ارسال شد.")
 
-                # ۲. ساخت و ارسال گزارش به گاد
                 report_text = (
                     f"📝 **گزارش پیام ناشناس جدید**\n\n"
                     f"👤 **ارسال کننده:**\n"
@@ -1114,7 +1356,6 @@ async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT
             else:
                 await update.message.reply_text("این بازی قارچ دیگر فعال نیست یا منقضی شده است.")
 
-        # --- منطق قدیمی برای بازی اعتراف ---
         elif game_type == "eteraf":
             reply_to_id = target_info.get('reply_to')
             header = "#اعتراف_ناشناس 🤫"
@@ -1124,8 +1365,7 @@ async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT
                 reply_to_message_id=reply_to_id
             )
             await update.message.reply_text("✅ اعتراف شما با موفقیت به صورت ناشناس در گروه ارسال شد.")
-        
-        # --- می‌توانید بازی‌های ناشناس دیگر را در آینده اینجا اضافه کنید ---
+            
         else:
             await update.message.reply_text("نوع بازی ناشناس مشخص نیست.")
 
@@ -1133,30 +1373,25 @@ async def handle_anonymous_message(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(f"⚠️ ارسال پیام با خطا مواجه شد: {e}")
         logger.error(f"Error in handle_anonymous_message for game {game_type}: {e}")
     finally:
-        # در هر صورت، اطلاعات از حافظه موقت کاربر پاک می‌شود
         if 'anon_target_chat' in context.user_data:
             del context.user_data['anon_target_chat']
 
-# --------------------------- GAME: TYPE SPEED (با اصلاح عکس) --------------------------
+# --------------------------- GAME: TYPE SPEED --------------------------
 def create_typing_image(text: str) -> io.BytesIO:
     reshaped_text = arabic_reshaper.reshape(text)
     bidi_text = get_display(reshaped_text)
     try:
-        # فرض بر وجود فونت Vazir.ttf است، در غیر این صورت از فونت پیش‌فرض استفاده می‌شود.
         font = ImageFont.truetype("Vazir.ttf", 24)
     except IOError:
         logger.warning("Vazir.ttf font not found. Falling back to default.")
         font = ImageFont.load_default()
     
-    # محاسبه اندازه تصویر لازم
     dummy_img, draw = Image.new('RGB', (1, 1)), ImageDraw.Draw(Image.new('RGB', (1, 1)))
     _, _, w, h = draw.textbbox((0, 0), bidi_text, font=font)
     
-    # ایجاد تصویر و نوشتن متن
     img = Image.new('RGB', (w + 40, h + 40), color=(255, 255, 255))
     ImageDraw.Draw(img).text((20, 20), bidi_text, fill=(0, 0, 0), font=font)
     
-    # ذخیره در حافظه موقت
     bio = io.BytesIO()
     bio.name = 'image.jpeg'
     img.save(bio, 'JPEG')
@@ -1170,21 +1405,19 @@ async def type_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sentence = random.choice(TYPING_SENTENCES)
     active_games['typing'][chat_id] = {"sentence": sentence, "start_time": datetime.now()}
     
-    # پیام اولیه شروع
     await context.bot.send_message(chat_id, "بازی تایپ سرعتی ۳... ۲... ۱...")
     
-    # ارسال عکس حاوی متن
     image_file = create_typing_image(sentence)
     await context.bot.send_photo(chat_id, photo=image_file, caption="سریع تایپ کنید!")
 
 async def handle_typing_attempt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if chat_id not in active_games['typing']: return
-    if not await force_join_middleware(update, context): return
+    # حذف چک عضویت اجباری از این بازی
+    # if not await force_join_middleware(update, context): return 
     
     game = active_games['typing'][chat_id]
     
-    # <<<--- اینجا تغییر اصلی است --->>>
     user_input = update.message.text.strip()
     
     if user_input == game['sentence']:
@@ -1193,7 +1426,7 @@ async def handle_typing_attempt(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"🏆 {user.mention_html()} برنده شد!\nزمان: **{duration:.2f}** ثانیه", parse_mode=ParseMode.HTML)
         del active_games['typing'][chat_id]
 
-# ... (پنل)
+# --------------------------- RSGAME PANEL HANDLERS ---------------------------
 async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """کامند /rsgame برای نمایش پنل داینامیک."""
     user = update.effective_user
@@ -1203,7 +1436,6 @@ async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # --- مرحله ۱: چک عضویت ---
     if await is_owner(user.id):
-        # مالک بدون چک وارد پنل می‌شود
         await show_rsgame_panel(update, context, is_callback=False, check_ok=True)
         return
         
@@ -1211,13 +1443,12 @@ async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
         is_member = member.status in ['member', 'administrator', 'creator']
     except Exception:
-        is_member = True # در صورت خطا، فرض می‌کنیم عضو است
+        is_member = True 
         logger.warning(f"Could not check channel membership for {user.id}. Assuming member.")
 
     if is_member:
         await show_rsgame_panel(update, context, is_callback=False, check_ok=True)
     else:
-        # اگر عضو نبود، پنل عضویت نشان داده می‌شود (دکمه‌ها در گروه)
         keyboard = [
             [InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")],
             [InlineKeyboardButton("✅ عضو شدم (بررسی)", callback_data=f"rsgame_check_join_{user.id}")]
@@ -1232,15 +1463,13 @@ async def show_rsgame_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     chat = update.effective_chat
     
     if is_callback and not check_ok:
-        # اگر از دکمه "عضو شدم" آمده، مجدداً چک می‌کنیم
         try:
             member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
             if member.status not in ['member', 'administrator', 'creator']:
                 return await update.callback_query.answer("⚠️ هنوز عضو کانال نشده‌اید! لطفا ابتدا عضو شوید.", show_alert=True)
         except Exception:
-            pass # ادامه با فرض عضویت در صورت خطا
+            pass
 
-    # --- ساخت کیبورد لیست بازی‌ها ---
     keyboard = [
         [InlineKeyboardButton("🃏 حکم (۲ نفره)", callback_data="rsgame_start_hokm_2p"), InlineKeyboardButton("🃏 حکم (۴ نفره)", callback_data="rsgame_start_hokm_4p")],
         [InlineKeyboardButton("🔢 حدس عدد", callback_data="rsgame_hads_addad"), InlineKeyboardButton("🕵️‍♂️ حدس کلمه", callback_data="rsgame_hads_kalame")],
@@ -1253,10 +1482,8 @@ async def show_rsgame_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     text = f"**{user.first_name} عزیز، لیست بازی‌های گروه:**"
     
     if is_callback:
-        # از دکمه آمده است (چک عضویت)
         await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
     else:
-        # از کامند آمده است
         await context.bot.send_message(chat.id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 
@@ -1270,7 +1497,7 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     
     await query.answer()
 
-    if action == "check": # rsgame_check_join_<user_id>
+    if action == "check":
         if str(user.id) != data[3]:
             return await query.answer("این دکمه برای شما نیست.", show_alert=True)
         await show_rsgame_panel(update, context, is_callback=True, check_ok=False)
@@ -1288,21 +1515,17 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
                 return await query.answer("❌ برای شروع بازی باید عضو کانال باشی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
         except:
-            pass 
-
-    # --- منطق شروع بازی‌ها ---
+            pass
 
     # 1. حکم (مستقیم به انتظار)
-    if action == "start" and data[2] == "hokm": # rsgame_start_hokm_2p, rsgame_start_hokm_4p
+    if action == "start" and data[2] == "hokm":
         mode = data[3]
         max_players = 4 if mode == '4p' else 2
         
-        # --- منطق انتظار بازیکن ---
         text = (
             f" بازی حکم **{max_players} نفره** توسط {user.mention_html()} شروع شد.\n\n"
             f"برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید و سپس روی دکمه زیر کلیک کنید."
         )
-        # دکمه پیوستن باید به چک عضویت با آلرت وصل شود
         game_id = query.message.message_id
         if chat.id not in active_games['hokm']: active_games['hokm'][chat.id] = {}
         active_games['hokm'][chat.id][game_id] = {"status": "joining", "mode": mode, "players": [], "message_id": game_id}
@@ -1312,7 +1535,7 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     # 2. حدس عدد (مستقیم به دریافت بازه)
     elif action == "hads_addad":
         context.chat_data['rsgame_waiting_for_input'] = {
-            'type': WAITING_FOR_CUSTOM_RANGE, # استفاده از حالت قدیمی
+            'type': WAITING_FOR_CUSTOM_RANGE,
             'user_id': user.id,
             'message_id': query.message.message_id
         }
@@ -1395,206 +1618,6 @@ async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             parse_mode=ParseMode.HTML
         )
 
-async def rsgame_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """کامند /rsgame برای نمایش پنل داینامیک."""
-    user = update.effective_user
-    chat = update.effective_chat
-    if chat.type == 'private':
-        return await update.message.reply_text("این دستور فقط در گروه‌ها کار می‌کند.")
-    
-    # --- مرحله ۱: چک عضویت ---
-    if await is_owner(user.id):
-        # مالک بدون چک وارد پنل می‌شود
-        await show_rsgame_panel(update, context, is_callback=False, check_ok=True)
-        return
-        
-    try:
-        member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-        is_member = member.status in ['member', 'administrator', 'creator']
-    except Exception:
-        is_member = True # در صورت خطا، فرض می‌کنیم عضو است
-        logger.warning(f"Could not check channel membership for {user.id}. Assuming member.")
-
-    if is_member:
-        await show_rsgame_panel(update, context, is_callback=False, check_ok=True)
-    else:
-        # اگر عضو نبود، پنل عضویت نشان داده می‌شود (دکمه‌ها در گروه)
-        keyboard = [
-            [InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")],
-            [InlineKeyboardButton("✅ عضو شدم (بررسی)", callback_data=f"rsgame_check_join_{user.id}")]
-        ]
-        text = f"❗️ {user.mention_html()} عزیز، برای استفاده از بازی‌ها ابتدا باید در کانال ما عضو شوی."
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-
-
-async def show_rsgame_panel(update: Update, context: ContextTypes.DEFAULT_TYPE, is_callback: bool, check_ok: bool = False):
-    """نمایش لیست بازی‌ها پس از تأیید عضویت یا مستقیماً."""
-    user = update.effective_user
-    chat = update.effective_chat
-    
-    if is_callback and not check_ok:
-        # اگر از دکمه "عضو شدم" آمده، مجدداً چک می‌کنیم
-        try:
-            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-            if member.status not in ['member', 'administrator', 'creator']:
-                return await update.callback_query.answer("⚠️ هنوز عضو کانال نشده‌اید! لطفا ابتدا عضو شوید.", show_alert=True)
-        except Exception:
-            pass # ادامه با فرض عضویت در صورت خطا
-
-    # --- ساخت کیبورد لیست بازی‌ها ---
-    keyboard = [
-        [InlineKeyboardButton("🃏 حکم (۲ نفره)", callback_data="rsgame_start_hokm_2p"), InlineKeyboardButton("🃏 حکم (۴ نفره)", callback_data="rsgame_start_hokm_4p")],
-        [InlineKeyboardButton("🔢 حدس عدد", callback_data="rsgame_hads_addad"), InlineKeyboardButton("🕵️‍♂️ حدس کلمه", callback_data="rsgame_hads_kalame")],
-        [InlineKeyboardButton("⌨️ تایپ سرعتی", callback_data="rsgame_type_speed"), InlineKeyboardButton("⭕️ دوز", callback_data="rsgame_dooz_public")],
-        [InlineKeyboardButton("🤫 اعتراف (پیشفرض)", callback_data="rsgame_eteraf_default"), InlineKeyboardButton("✍️ اعتراف (سفارشی)", callback_data="rsgame_eteraf_custom")],
-        [InlineKeyboardButton("🍄 قارچ", callback_data="rsgame_gharch")],
-        [InlineKeyboardButton("👤 پشتیبانی", url=f"https://t.me/{SUPPORT_USERNAME}"), InlineKeyboardButton("❌ بستن پنل", callback_data="rsgame_close")]
-    ]
-    
-    text = f"**{user.first_name} عزیز، لیست بازی‌های گروه:**"
-    
-    if is_callback:
-        # از دکمه آمده است (چک عضویت)
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-    else:
-        # از کامند آمده است
-        await context.bot.send_message(chat.id, text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
-
-
-async def rsgame_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """مدیریت دکمه‌های پنل /rsgame."""
-    query = update.callback_query
-    user = query.from_user
-    chat = query.message.chat
-    data = query.data.split('_')
-    action = data[1]
-    
-    await query.answer()
-
-    if action == "check": # rsgame_check_join_<user_id>
-        if str(user.id) != data[3]:
-            return await query.answer("این دکمه برای شما نیست.", show_alert=True)
-        await show_rsgame_panel(update, context, is_callback=True, check_ok=False)
-        return
-        
-    elif action == "close":
-        await query.message.delete()
-        return
-
-    # --- چک مجدد عضویت برای دکمه‌های بازی (آلرت) ---
-    if not await is_owner(user.id):
-        try:
-            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-            if member.status not in ['member', 'administrator', 'creator']:
-                keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
-                return await query.answer("❌ برای شروع بازی باید عضو کانال باشی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
-        except:
-            pass 
-
-    # --- منطق شروع بازی‌ها ---
-
-    # 1. حکم (مستقیم به انتظار)
-    if action == "start" and data[2] == "hokm": # rsgame_start_hokm_2p, rsgame_start_hokm_4p
-        mode = data[3]
-        max_players = 4 if mode == '4p' else 2
-        
-        # --- منطق انتظار بازیکن ---
-        text = (
-            f" بازی حکم **{max_players} نفره** توسط {user.mention_html()} شروع شد.\n\n"
-            f"برای پیوستن، ابتدا در کانال {FORCED_JOIN_CHANNEL} عضو شوید و سپس روی دکمه زیر کلیک کنید."
-        )
-        # دکمه پیوستن باید به چک عضویت با آلرت وصل شود
-        game_id = query.message.message_id
-        if chat.id not in active_games['hokm']: active_games['hokm'][chat.id] = {}
-        active_games['hokm'][chat.id][game_id] = {"status": "joining", "mode": mode, "players": [], "message_id": game_id}
-        keyboard = [[InlineKeyboardButton(f"پیوستن به بازی (0/{max_players})", callback_data=f"hokm_join_{game_id}")]]
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
-        
-    # 2. حدس عدد (مستقیم به دریافت بازه)
-    elif action == "hads_addad":
-        context.chat_data['rsgame_waiting_for_input'] = {
-            'type': WAITING_FOR_CUSTOM_RANGE, # استفاده از حالت قدیمی
-            'user_id': user.id,
-            'message_id': query.message.message_id
-        }
-        await query.edit_message_text(
-            f"{user.mention_html()} عزیز، لطفاً بازه بازی را مشخص کنید.\n(مثال: `1-1000`)",
-            parse_mode=ParseMode.HTML
-        )
-    
-    # 3. حدس کلمه (مستقیم به شروع بازی - حذف پنل)
-    elif action == "hads_kalame":
-        if chat.id in active_games['hangman']:
-            return await query.edit_message_text("یک بازی حدس کلمه فعال است.")
-        
-        await query.message.delete()
-        await hads_kalame_command(query.message, context)
-        
-    # 4. تایپ سرعتی (مستقیم به شروع بازی - حذف پنل)
-    elif action == "type_speed":
-        if chat.id in active_games['typing']:
-            return await query.edit_message_text("یک بازی تایپ سرعتی فعال است.")
-            
-        await query.message.delete()
-        await type_command(query.message, context)
-
-    # 5. دوز (مستقیم به انتظار بازیکن عمومی)
-    elif action == "dooz_public":
-        chat_id = chat.id
-        if chat_id not in active_games['dooz']: active_games['dooz'][chat_id] = {}
-        if any(g.get("status") == "joining_public" for g in active_games['dooz'][chat_id].values()):
-             return await query.edit_message_text("یک بازی دوز عمومی در حال انتظار است.")
-
-        text = (
-            f"⭕️ **بازی دوز عمومی** توسط {user.mention_html()} آغاز شد.\n\n"
-            "برای پیوستن به عنوان بازیکن دوم (❌)، روی دکمه زیر کلیک کنید."
-        )
-        
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML)
-        game_id = query.message.message_id
-        
-        active_games['dooz'][chat_id][game_id] = {
-            "status": "joining_public", 
-            "p1_id": user.id,
-            "p1_name": user.first_name,
-            "message_id": game_id
-        }
-        
-        keyboard = [[InlineKeyboardButton("⚔️ پیوستن به بازی (❌)", callback_data=f"dooz_join_public_{game_id}")]]
-        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
-        
-    # 6. اعتراف پیشفرض (حذف پنل و شروع)
-    elif action == "eteraf_default":
-        await query.message.delete()
-        original_message = query.message
-        original_message.text = "/eteraf"
-        context.args = []
-        await eteraf_command(original_message, context)
-
-    # 7. اعتراف سفارشی (دریافت متن)
-    elif action == "eteraf_custom":
-        context.chat_data['rsgame_waiting_for_input'] = {
-            'type': RS_PANEL_WAITING_FOR_ETERAF_TEXT,
-            'user_id': user.id,
-            'message_id': query.message.message_id
-        }
-        await query.edit_message_text(
-            f"{user.mention_html()} عزیز، لطفاً متن دلخواه خود را برای شروع بازی اعتراف ارسال کنید.",
-            parse_mode=ParseMode.HTML
-        )
-
-    # 8. قارچ (دریافت گاد)
-    elif action == "gharch":
-        context.chat_data['rsgame_waiting_for_input'] = {
-            'type': RS_PANEL_WAITING_FOR_GHARCH_GOD,
-            'user_id': user.id,
-            'message_id': query.message.message_id
-        }
-        await query.edit_message_text(
-            f"{user.mention_html()} عزیز، لطفاً گاد بازی را مشخص کنید.\n"
-            f"(می‌توانید یوزرنیم، آیدی عددی یا پیام کاربر مورد نظر را منشن/ریپلای کنید)",
-            parse_mode=ParseMode.HTML
-        )
 
 async def receive_god_username_from_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """دریافت گاد با یوزرنیم، آیدی یا منشن (ورودی از پنل)."""
@@ -1602,7 +1625,6 @@ async def receive_god_username_from_panel(update: Update, context: ContextTypes.
     message = update.message
     text_input = message.text
 
-    # منطق پیدا کردن گاد از متن ارسالی (همانند receive_god_username)
     if message.entities and message.entities[0].type == MessageEntity.TEXT_MENTION:
         user_entity = message.entities[0].user
         god_info = {'id': user_entity.id, 'mention': user_entity.mention_html()}
@@ -1626,9 +1648,11 @@ async def receive_god_username_from_panel(update: Update, context: ContextTypes.
     context.chat_data['god_info'] = god_info
     setup_message_id = context.chat_data.get('gharch_setup_message_id')
 
-    keyboard = [[InlineKeyboardButton("✅ تایید می‌کنم", callback_data=f"gharch_confirm_god_{god_info.get('id', god_info.get('username'))}")]]
+    # اگر یوزرنیم در god_info موجود بود، برای تایید باید از آن استفاده شود
+    cb_data_identifier = god_info.get('id', god_info.get('username').lstrip('@'))
     
-    # ادیت پیام پنل به حالت تایید گاد
+    keyboard = [[InlineKeyboardButton("✅ تایید می‌کنم", callback_data=f"gharch_confirm_god_{cb_data_identifier}")]]
+    
     await context.bot.edit_message_text(
         chat_id=update.effective_chat.id,
         message_id=setup_message_id,
@@ -1643,226 +1667,11 @@ async def receive_god_username_from_panel(update: Update, context: ContextTypes.
     
     return CONFIRMING_GOD
 
-async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پردازش ورودی‌های متنی ادمین برای حالت‌های سفارشی پنل (rhinogame و rsgame)."""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    
-    # چک می‌کنیم که کدام پنل فعال است
-    input_key = None
-    if 'rsgame_waiting_for_input' in context.chat_data:
-        input_key = 'rsgame_waiting_for_input'
-    elif 'waiting_for_input' in context.chat_data:
-        input_key = 'waiting_for_input'
-
-    if not input_key:
-        return
-
-    waiting_info = context.chat_data[input_key]
-    if waiting_info['user_id'] != user_id:
-        return # ورودی از کاربر دیگری است
-
-    input_type = waiting_info['type']
-    message_id_to_edit = waiting_info['message_id']
-    
-    
-    if input_type == WAITING_FOR_CUSTOM_RANGE or input_type == 3: # حدس عدد پنل rhino_panel یا rsgame
-        del context.chat_data[input_key]
-        try:
-            min_str, max_str = convert_persian_to_english_numbers(update.message.text).split('-')
-            min_range, max_range = int(min_str.strip()), int(max_str.strip())
-            if min_range >= max_range: raise ValueError
-            
-            await update.message.delete()
-            if chat_id in active_games['guess_number']:
-                return await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id_to_edit, text="یک بازی حدس عدد در این گروه فعال است.")
-
-            secret_number = random.randint(min_range, max_range)
-            active_games['guess_number'][chat_id] = {"number": secret_number, "min": min_range, "max": max_range}
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id_to_edit,
-                text=f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **{min_range}** و **{max_range}** انتخاب شده.",
-                parse_mode=ParseMode.MARKDOWN
-            )
-
-        except Exception:
-            await update.message.delete()
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id_to_edit,
-                text="فرمت اشتباه است. بازی لغو شد. لطفاً دوباره از پنل تلاش کنید.",
-            )
-
-    elif input_type == WAITING_FOR_CUSTOM_ETERAF or input_type == 4: # اعتراف سفارشی پنل rhino_panel
-        custom_text = update.message.text
-        del context.chat_data[input_key]
-        await update.message.delete()
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
-        
-        original_message = update.message
-        original_message.text = f"/eteraf {custom_text}"
-        context.args = custom_text.split()
-        await eteraf_command(original_message, context)
-
-    elif input_type == WAITING_FOR_GHARCH_GOD or input_type == 5: # قارچ پنل rhino_panel
-        del context.chat_data[input_key]
-        await update.message.delete()
-        
-        # برای بازی قارچ، پیام اصلی را برای فرآیند مکالمه جدید ارسال می‌کنیم
-        if 'gharch_setup_message_id' in context.chat_data:
-            del context.chat_data['gharch_setup_message_id']
-            
-        # شبیه سازی یک پیام با /gharch برای ورود به مکالمه
-        original_message = update.message
-        original_message.text = "/gharch " + update.message.text
-        context.args = update.message.text.split()
-        context.chat_data['starter_admin_id'] = user_id
-        
-        # برای ادامه مکالمه قارچ، ورودی کاربر را در context.user_data برای تابع receive_god_username ذخیره می‌کنیم
-        context.chat_data['god_username_input'] = update.message.text
-        await receive_god_username_from_panel(update, context)
-        return
-        
-    # --- منطق جدید برای پنل RSGAME ---
-    elif input_type == RS_PANEL_WAITING_FOR_ETERAF_TEXT or input_type == 6: # اعتراف سفارشی پنل rsgame
-        custom_text = update.message.text
-        del context.chat_data[input_key]
-        await update.message.delete()
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
-        
-        original_message = update.message
-        original_message.text = f"/eteraf {custom_text}"
-        context.args = custom_text.split()
-        await eteraf_command(original_message, context)
-        
-    elif input_type == RS_PANEL_WAITING_FOR_GHARCH_GOD or input_type == 7: # قارچ پنل rsgame
-        del context.chat_data[input_key]
-        await update.message.delete()
-        
-        # پیام اصلی پنل را به عنوان پیام مکالمه در نظر می‌گیریم
-        context.chat_data['gharch_setup_message_id'] = message_id_to_edit
-        
-        # برای ادامه مکالمه قارچ، ورودی کاربر را به تابع کمکی ارسال می‌کنیم
-        await receive_god_username_from_panel(update, context)
-        return
-
-async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """پردازش ورودی‌های متنی ادمین برای حالت‌های سفارشی پنل (rhinogame و rsgame)."""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    
-    # چک می‌کنیم که کدام پنل فعال است
-    input_key = None
-    if 'rsgame_waiting_for_input' in context.chat_data:
-        input_key = 'rsgame_waiting_for_input'
-    elif 'waiting_for_input' in context.chat_data:
-        input_key = 'waiting_for_input'
-
-    if not input_key:
-        return
-
-    waiting_info = context.chat_data[input_key]
-    if waiting_info['user_id'] != user_id:
-        return # ورودی از کاربر دیگری است
-
-    input_type = waiting_info['type']
-    message_id_to_edit = waiting_info['message_id']
-    
-    
-    if input_type == WAITING_FOR_CUSTOM_RANGE or input_type == 3: # حدس عدد پنل rhino_panel یا rsgame
-        del context.chat_data[input_key]
-        try:
-            min_str, max_str = convert_persian_to_english_numbers(update.message.text).split('-')
-            min_range, max_range = int(min_str.strip()), int(max_str.strip())
-            if min_range >= max_range: raise ValueError
-            
-            await update.message.delete()
-            if chat_id in active_games['guess_number']:
-                return await context.bot.edit_message_text(chat_id=chat_id, message_id=message_id_to_edit, text="یک بازی حدس عدد در این گروه فعال است.")
-
-            secret_number = random.randint(min_range, max_range)
-            active_games['guess_number'][chat_id] = {"number": secret_number, "min": min_range, "max": max_range}
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id_to_edit,
-                text=f"🎲 **بازی حدس عدد شروع شد!** 🎲\n\nیک عدد بین **{min_range}** و **{max_range}** انتخاب شده.",
-                parse_mode=ParseMode.MARKDOWN
-            )
-
-        except Exception:
-            await update.message.delete()
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=message_id_to_edit,
-                text="فرمت اشتباه است. بازی لغو شد. لطفاً دوباره از پنل تلاش کنید.",
-            )
-
-    elif input_type == WAITING_FOR_CUSTOM_ETERAF or input_type == 4: # اعتراف سفارشی پنل rhino_panel
-        custom_text = update.message.text
-        del context.chat_data[input_key]
-        await update.message.delete()
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
-        
-        original_message = update.message
-        original_message.text = f"/eteraf {custom_text}"
-        context.args = custom_text.split()
-        await eteraf_command(original_message, context)
-
-    elif input_type == WAITING_FOR_GHARCH_GOD or input_type == 5: # قارچ پنل rhino_panel
-        del context.chat_data[input_key]
-        await update.message.delete()
-        
-        # برای بازی قارچ، پیام اصلی را برای فرآیند مکالمه جدید ارسال می‌کنیم
-        if 'gharch_setup_message_id' in context.chat_data:
-            del context.chat_data['gharch_setup_message_id']
-            
-        # شبیه سازی یک پیام با /gharch برای ورود به مکالمه
-        original_message = update.message
-        original_message.text = "/gharch " + update.message.text
-        context.args = update.message.text.split()
-        context.chat_data['starter_admin_id'] = user_id
-        
-        # برای ادامه مکالمه قارچ، ورودی کاربر را در context.user_data برای تابع receive_god_username ذخیره می‌کنیم
-        context.chat_data['god_username_input'] = update.message.text
-        await receive_god_username_from_panel(update, context)
-        return
-        
-    # --- منطق جدید برای پنل RSGAME ---
-    elif input_type == RS_PANEL_WAITING_FOR_ETERAF_TEXT or input_type == 6: # اعتراف سفارشی پنل rsgame
-        custom_text = update.message.text
-        del context.chat_data[input_key]
-        await update.message.delete()
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id_to_edit)
-        
-        original_message = update.message
-        original_message.text = f"/eteraf {custom_text}"
-        context.args = custom_text.split()
-        await eteraf_command(original_message, context)
-        
-    elif input_type == RS_PANEL_WAITING_FOR_GHARCH_GOD or input_type == 7: # قارچ پنل rsgame
-        del context.chat_data[input_key]
-        await update.message.delete()
-        
-        # پیام اصلی پنل را به عنوان پیام مکالمه در نظر می‌گیریم
-        context.chat_data['gharch_setup_message_id'] = message_id_to_edit
-        
-        # برای ادامه مکالمه قارچ، ورودی کاربر را به تابع کمکی ارسال می‌کنیم
-        await receive_god_username_from_panel(update, context)
-        return
-    
-# =================================================================
-# ================= OWNER & CORE COMMANDS START ===================
-# =================================================================
-# --------------------------- PLACEHOLDERS & SETTINGS ---------------------------
-async def placeholder_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles commands that are not yet implemented."""
-    if not await pre_command_check(update, context): return
-    await update.message.reply_text(f"قابلیت `{update.message.text.split()[0]}` در آینده اضافه خواهد شد.", parse_mode=ParseMode.MARKDOWN)
-
-# ======================= این تابع را جایگزین کنید =======================
-# ======================= این تابع را به طور کامل جایگزین کنید =======================
+# --------------------------- CORE & OWNER COMMANDS ---------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
 
-    # --- بخش ۱: مدیریت لینک‌های ورودی (Deep Linking) ---
     if context.args:
         try:
             payload = context.args[0]
@@ -1883,14 +1692,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['anon_target_chat'] = {'id': target_chat_id, 'type': game_type}
                 if len(parts) > 2:
                     context.user_data['anon_target_chat']['reply_to'] = int(parts[2])
-                prompt = "اعتراف خود را بنویسید تا به صورت ناشناس در گروه ارسال شود..."
+                prompt = "اعتراف خود را بنویسید تا به صورت ناشناس در grupo ارسال شود..."
                 await update.message.reply_text(prompt)
                 return
 
         except (ValueError, IndexError):
-            pass # اگر payload معتبر نبود، به بخش استارت معمولی می‌رود
+            pass 
 
-    # --- بخش ۲: منطق استارت معمولی ---
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur: 
@@ -1901,7 +1709,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if conn: conn.close()
         return
 
-    # --- بخش ۳: ارسال پیام خوشامدگویی (سفارشی یا پیش‌فرض) ---
     keyboard = [
         [InlineKeyboardButton("➕ افزودن ربات به گروه", url=f"https://t.me/{(await context.bot.get_me()).username}?startgroup=true")],
         [InlineKeyboardButton("👤 ارتباط با پشتیبان", url=f"https://t.me/{SUPPORT_USERNAME}")]
@@ -1926,7 +1733,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not custom_welcome_sent:
         await update.message.reply_text("سلام به راینوبازی خوش آمدید.", reply_markup=reply_markup)
     
-    # ارسال گزارش به ادمین‌ها
     report_text = f"✅ کاربر جدید: {user.mention_html()} (ID: `{user.id}`)"
     for owner_id in OWNER_IDS:
         try:
@@ -1939,7 +1745,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = "راهنمای ربات 🎮\n\n/hokm - بازی حکم\n/dooz @user - بازی دوز\n/hads_kalame - حدس کلمه\n/hads_addad - حدس عدد\n/type - تایپ سرعتی\n/gharch - پیام ناشناس\n/eteraf - اعتراف ناشناس"
     await update.message.reply_text(help_text)
 
-# --- دستورات مالک (کامل شده) ---
 async def set_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_owner(update.effective_user.id): return
     if not update.message.reply_to_message: return await update.message.reply_text("روی یک پیام ریپلای کنید.")
@@ -1977,6 +1782,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         try:
             await context.bot.forward_message(chat_id=target_id, from_chat_id=update.message.reply_to_message.chat.id, message_id=update.message.reply_to_message.message_id)
             sent += 1
+            await asyncio.sleep(0.1)
         except Exception as e:
             failed += 1
             logger.error(f"Broadcast failed for {target_id}: {e}")
@@ -1984,40 +1790,6 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 async def fwdusers_command(update: Update, context: ContextTypes.DEFAULT_TYPE): await broadcast_command(update, context, "users")
 async def fwdgroups_command(update: Update, context: ContextTypes.DEFAULT_TYPE): await broadcast_command(update, context, "groups")
-
-async def leave_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_owner(update.effective_user.id): return
-    if not context.args: return await update.message.reply_text("استفاده: /leave <group_id>")
-    try:
-        group_id = int(context.args[0])
-        await context.bot.leave_chat(group_id)
-        await update.message.reply_text(f"✅ با موفقیت از گروه `{group_id}` خارج شدم.", parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        await update.message.reply_text(f"خطا: {e}")
-
-async def grouplist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_owner(update.effective_user.id): return
-    conn = get_db_connection()
-    if conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT group_id, title, member_count FROM groups;")
-            groups = cur.fetchall()
-        conn.close()
-        if not groups: return await update.message.reply_text("ربات در هیچ گروهی عضو نیست.")
-        message = "📜 **لیست گروه‌ها:**\n\n"
-        for i, (group_id, title, member_count) in enumerate(groups, 1):
-            message += f"{i}. **{title}**\n   - ID: `{group_id}`\n   - اعضا: {member_count}\n\n"
-        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN)
-
-async def join_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_owner(update.effective_user.id): return
-    if not context.args: return await update.message.reply_text("استفاده: /join <group_id>")
-    try:
-        group_id = int(context.args[0])
-        link = await context.bot.create_chat_invite_link(group_id, member_limit=30)
-        await update.message.reply_text(f"لینک ورود شما:\n{link.invite_link}")
-    except Exception as e:
-        await update.message.reply_text(f"خطا در ساخت لینک (شاید ربات ادمین نباشد): {e}")
 
 async def ban_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_owner(update.effective_user.id): return
@@ -2044,7 +1816,6 @@ async def unban_user_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except: await update.message.reply_text("آیدی نامعتبر است.")
 
 async def ban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bans a group from using the bot."""
     if not await is_owner(update.effective_user.id): return
     if not context.args: return await update.message.reply_text("استفاده صحیح: /ban_group <group_id>")
     
@@ -2058,7 +1829,6 @@ async def ban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             await update.message.reply_text(f"گروه `{group_id}` با موفقیت مسدود شد.", parse_mode=ParseMode.MARKDOWN)
             
-            # Bot leaves the group after banning it
             try:
                 await context.bot.leave_chat(group_id)
             except Exception as e:
@@ -2068,7 +1838,6 @@ async def ban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("لطفا یک آیدی عددی معتبر برای گروه وارد کنید.")
 
 async def unban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Unbans a group."""
     if not await is_owner(update.effective_user.id): return
     if not context.args: return await update.message.reply_text("استفاده صحیح: /unban_group <group_id>")
 
@@ -2084,24 +1853,20 @@ async def unban_group_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     except (ValueError, IndexError):
         await update.message.reply_text("لطفا یک آیدی عددی معتبر برای گروه وارد کنید.")
 
-# ======================= این تابع را نیز جایگزین کنید =======================
 async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     result = update.chat_member
     if not result: return
 
     chat = result.chat
-    user = result.from_user # کاربری که ربات را اضافه کرده
+    user = result.from_user
     
-    # مطمئن می‌شویم که تغییر وضعیت مربوط به ربات ماست
     if result.new_chat_member.user.id != context.bot.id:
         return
 
-    # --- وقتی ربات به گروه اضافه می‌شود ---
     if result.new_chat_member.status == 'member' and result.old_chat_member.status != 'member':
         conn = get_db_connection()
         if not conn: return
         
-        # <<<--- شروع بخش اضافه‌شده: چک کردن محدودیت نصب --->>>
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT COUNT(*) FROM groups;")
@@ -2116,7 +1881,6 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 return
         except Exception as e:
             logger.error(f"Could not check group install limit: {e}")
-        # <<<--- پایان بخش اضافه‌شده --->>>
 
         member_count = await chat.get_member_count()
         with conn.cursor() as cur:
@@ -2145,24 +1909,19 @@ async def track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             try: await context.bot.send_message(owner_id, report, parse_mode=ParseMode.HTML)
             except: pass
 
-    # --- وقتی ربات از گروه حذف می‌شود ---
     elif result.new_chat_member.status == 'left':
         conn = get_db_connection()
         if conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM groups WHERE group_id = %s;", (chat.id,))
+                cur.execute("DELETE FROM banned_groups WHERE group_id = %s;", (chat.id,)) # پاک کردن از لیست بن در صورت خروج
                 conn.commit()
             conn.close()
         report = f"❌ **ربات از گروه زیر اخراج شد:**\n\n🌐 نام: {chat.title}\n🆔: `{chat.id}`"
         for owner_id in OWNER_IDS:
             try: await context.bot.send_message(owner_id, report, parse_mode=ParseMode.MARKDOWN)
             except: pass
-                
-# =================================================================
-# ======================== MAIN FUNCTION ==========================
-# =================================================================
-
-# ======================= این تابع را نیز به طور کامل جایگزین کنید =======================
+            
 # ======================== MAIN FUNCTION (ساختار نهایی) ==========================
 def main() -> None:
     setup_database()
@@ -2177,7 +1936,7 @@ def main() -> None:
     gharch_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("gharch", gharch_command)],
         states={
-            ASKING_GOD_USERNAME: [MessageHandler(filters.TEXT | filters.REPLY | filters.Entity(MessageEntity.TEXT_MENTION), receive_god_username)],
+            ASKING_GOD_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_god_username)],
             CONFIRMING_GOD: [CallbackQueryHandler(confirm_god, pattern=r'^gharch_confirm_god_')],
         },
         fallbacks=[CommandHandler('cancel', cancel_gharch)],
@@ -2189,19 +1948,19 @@ def main() -> None:
         entry_points=[CommandHandler("hads_addad", hads_addad_command)],
         states={
             SELECTING_RANGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_range)],
-            GUESSING: [MessageHandler(filters.Regex(r'^[\d۰-۹]+$'), handle_guess_message)],
+            # بعد از دریافت محدوده، ConversationHandler پایان می‌یابد و هندلر عمومی کار را ادامه می‌دهد.
+            GUESSING: [MessageHandler(filters.Regex(r'^[\d۰-۹]+$'), handle_guess_message)], 
         },
         fallbacks=[CommandHandler('cancel', cancel_game)],
         per_user=False, per_chat=True
     )
-    # اگر از ConversationHandler بالا استفاده می‌کنید، این خط را اضافه کنید:
     application.add_handler(guess_number_conv)
 
     # --- Command Handlers ---
     # پنل‌ها
     application.add_handler(CommandHandler("rhinogame", show_game_panel))
     application.add_handler(MessageHandler(filters.Regex(r'(?i)^(بازی|شروع بازی|game|پنل)$') & filters.ChatType.GROUPS, show_game_panel))
-    application.add_handler(CommandHandler("rsgame", rsgame_command)) # <--- کامند جدید
+    application.add_handler(CommandHandler("rsgame", rsgame_command))
     
     # دستورات اصلی
     application.add_handler(CommandHandler("start", start_command))
@@ -2212,7 +1971,7 @@ def main() -> None:
     application.add_handler(CommandHandler("hads_kalame", hads_kalame_command))
     application.add_handler(CommandHandler("type", type_command))
     application.add_handler(CommandHandler("eteraf", eteraf_command))
-    # application.add_handler(CommandHandler("hads_addad", hads_addad_command)) # این در Conv Handler است
+
     # دستورات مالک
     application.add_handler(CommandHandler("setstart", set_start_command))
     application.add_handler(CommandHandler("stats", stats_command))
@@ -2225,13 +1984,16 @@ def main() -> None:
 
     # --- CallbackQuery Handlers ---
     application.add_handler(CallbackQueryHandler(rhino_panel_callback, pattern=r'^rhino_panel_'))
-    application.add_handler(CallbackQueryHandler(rsgame_callback_handler, pattern=r'^rsgame_')) # <--- Callback جدید
+    application.add_handler(CallbackQueryHandler(rsgame_callback_handler, pattern=r'^rsgame_'))
     application.add_handler(CallbackQueryHandler(hokm_callback, pattern=r'^hokm_'))
     application.add_handler(CallbackQueryHandler(dooz_callback, pattern=r'^dooz_'))
 
     # --- Message Handlers (با اولویت) ---
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_admin_input), group=1)
-    application.add_handler(MessageHandler(filters.Regex(r'^[\d۰-۹]+$') & filters.ChatType.GROUPS, handle_guess_message), group=2)
+    
+    # هندلر حدس عدد برای پیام‌های معمولی بعد از شروع بازی (که ConversationHandler را نیز مدیریت می‌کند)
+    application.add_handler(MessageHandler(filters.Regex(r'^[\d۰-۹]+$') & filters.ChatType.GROUPS, handle_guess_message), group=2) 
+    
     application.add_handler(MessageHandler(filters.Regex(r'^[آ-ی]$') & filters.ChatType.GROUPS, handle_letter_guess), group=2)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS, handle_typing_attempt), group=2)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_anonymous_message))
