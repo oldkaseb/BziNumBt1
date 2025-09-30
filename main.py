@@ -535,32 +535,41 @@ def create_deck():
     return deck
 
 def card_to_persian(card):
+    """کارت را به فرمت فارسی با ایموجی تبدیل می‌کند."""
     if not card: return "🃏"
     suits = {'S': '♠️', 'H': '♥️', 'D': '♦️', 'C': '♣️'}
     ranks = {11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
     suit, rank = card[0], int(card[1:])
+    # نمایش رنک کارت یا حرف معادل آن
     rank_display = str(ranks.get(rank, rank))
     return f"{suits[suit]} {rank_display}"
 
 def get_card_value(card, hokm_suit, trick_suit):
+    """ارزش عددی یک کارت را برای مقایسه و تعیین برنده دست محاسبه می‌کند."""
     suit, rank = card[0], int(card[1:])
     value = rank
     if suit == hokm_suit:
-        value += 200
+        value += 200  # کارت‌های حکم بالاترین ارزش را دارند
     elif suit == trick_suit:
-        value += 100
+        value += 100  # کارت‌های خال زمین ارزش بیشتری از سایر خال‌ها دارند
     return value
 
+# --- تابع اصلی برای ساخت رابط کاربری (صفحه بازی) ---
 async def render_hokm_board(game: dict, context: ContextTypes.DEFAULT_TYPE):
+    """
+    این تابع صفحه بازی (متن و دکمه‌ها) را بر اساس وضعیت فعلی بازی برای همه تولید می‌کند.
+    """
     game_id = game['message_id']
     keyboard = []
     
+    # --- بخش نمایش بازیکنان و کارت‌های روی میز ---
     if game['mode'] == '4p':
         p_names = [p['name'] for p in game['players']]
         p_ids = [p['id'] for p in game['players']]
         team_a_text = f"🔴 تیم 1: {p_names[0]} و {p_names[2]}"
         team_b_text = f"🔵 تیم 2: {p_names[1]} و {p_names[3]}"
         
+        # استفاده از دیکشنری برای نگهداری کارت‌ها تا هر کارت دقیقاً جلوی بازیکن خودش قرار گیرد
         table_cards_map = {pid: "➖" for pid in p_ids}
         for play in game.get('current_trick', []):
             table_cards_map[play['player_id']] = card_to_persian(play['card'])
@@ -624,6 +633,7 @@ async def render_hokm_board(game: dict, context: ContextTypes.DEFAULT_TYPE):
     
     return InlineKeyboardMarkup(keyboard)
 
+# --- تابع مدیریت دستور اولیه بازی (بدون تغییر) ---
 async def hokm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """دستور اولیه برای شروع بازی و انتخاب حالت ۲ یا ۴ نفره."""
     if not await pre_command_check(update, context): return
@@ -639,11 +649,13 @@ async def hokm_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_text("حالت بازی حکم را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+# --- تابع اصلی برای مدیریت تمام تعاملات بازی ---
 async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
     chat_id = query.message.chat.id
     
+    # چک بن کاربر
     conn = get_db_connection()
     if conn:
         with conn.cursor() as cur:
@@ -682,15 +694,16 @@ async def hokm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         max_players = 4 if game['mode'] == '4p' else 2
         if len(game['players']) >= max_players: return await query.answer("ظرفیت بازی تکمیل است.", show_alert=True)
         
-        # --- چک اجباری عضویت (با آلرت) ---
-        try:
-            member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-            if member.status not in ['member', 'administrator', 'creator']:
-                keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
-                return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
-        except Exception:
-            pass
-        # ----------------------------------
+        # --- اعمال چک اجباری عضویت با آلرت ---
+        if not await is_owner(user.id):
+            try:
+                member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
+                    return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
+            except Exception:
+                pass
+        # ------------------------------------
 
         await query.answer("به بازی پیوستید!")
         game['players'].append({'id': user.id, 'name': user.first_name})
@@ -968,7 +981,7 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data.split('_')
     action = data[1]
 
-    if action == "join_public":
+    if action == "join_public": # پیوستن به بازی دوز عمومی
         game_id = int(data[2])
         chat_id = query.message.chat.id
         
@@ -982,13 +995,14 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await query.answer("شما نمی‌توانید به بازی خودتان بپیوندید!", show_alert=True)
         
         # --- چک اجباری عضویت (با آلرت) ---
-        try:
-             member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-             if member.status not in ['member', 'administrator', 'creator']:
-                 keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
-                 return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
-        except Exception:
-             pass
+        if not await is_owner(user.id):
+            try:
+                 member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+                 if member.status not in ['member', 'administrator', 'creator']:
+                     keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
+                     return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
+            except Exception:
+                 pass
         # ----------------------------------
         
         await query.answer("به بازی پیوستید! بازی شروع شد.")
@@ -1029,13 +1043,14 @@ async def dooz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if action == "accept":
             # --- چک اجباری عضویت (با آلرت) ---
-            try:
-                 member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
-                 if member.status not in ['member', 'administrator', 'creator']:
-                     keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
-                     return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
-            except Exception:
-                 pass
+            if not await is_owner(user.id):
+                try:
+                     member = await context.bot.get_chat_member(chat_id=FORCED_JOIN_CHANNEL, user_id=user.id)
+                     if member.status not in ['member', 'administrator', 'creator']:
+                         keyboard = [[InlineKeyboardButton(" عضویت در کانال ", url=f"https://t.me/{FORCED_JOIN_CHANNEL.lstrip('@')}")]]
+                         return await query.answer("⚠️ برای پیوستن به بازی، ابتدا باید در کانال عضو شوی.", reply_markup=InlineKeyboardMarkup(keyboard), show_alert=True)
+                except Exception:
+                     pass
             # ----------------------------------
 
             chat_id = query.message.chat.id
@@ -1230,18 +1245,20 @@ async def confirm_god(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user = query.from_user
     chat_id = query.message.chat.id
     
-    god_username_from_admin = data = query.data.split('_')[3]
+    # شناسه تایید از کال‌بک دیتا (می‌تواند آیدی عددی یا یوزرنیم بدون @ باشد)
+    data = query.data.split('_')
+    cb_data_identifier = data[3]
     
-    # چک می‌کند که کاربر کلیک کننده همان گاد باشد (بر اساس یوزرنیم یا آیدی عددی)
+    # چک می‌کند که کاربر کلیک کننده همان گاد باشد
     is_correct_user = False
-    if god_username_from_admin.isdigit() and user.id == int(god_username_from_admin):
+    if cb_data_identifier.isdigit() and user.id == int(cb_data_identifier):
          is_correct_user = True
-    elif user.username and user.username.lower() == god_username_from_admin.lower():
+    elif user.username and user.username.lower() == cb_data_identifier.lower():
          is_correct_user = True
 
     if not is_correct_user:
         await query.answer("این درخواست برای شما نیست.", show_alert=True)
-        return ConversationHandler.END # پایان دادن به مکالمه برای کاربر دیگر
+        return ConversationHandler.END
 
     await query.answer("شما به عنوان گاد تایید شدید!")
 
